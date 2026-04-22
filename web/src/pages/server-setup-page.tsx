@@ -21,6 +21,7 @@ export function ServerSetupPage() {
     instanceName: "",
     port: "1433",
     environment: "production",
+    targetType: "on-prem",
     authType: "SQL Auth",
     username: "sqlmonitor_svc",
     password: "",
@@ -29,6 +30,26 @@ export function ServerSetupPage() {
     trustServerCert: "false",
     timeout: "30"
   });
+
+  const isDatabaseScopedTarget = form.targetType === "azure-sql-db" || form.targetType === "fabric-sql";
+
+  const hostnamePlaceholder =
+    form.targetType === "azure-sql-db"
+      ? "yourserver.database.windows.net"
+      : form.targetType === "fabric-sql"
+        ? "workspace.datawarehouse.fabric.microsoft.com"
+        : form.targetType === "sql-mi"
+          ? "your-mi.public.<region>.database.windows.net"
+          : "Hostname / FQDN";
+
+  const hostnameHint =
+    form.targetType === "azure-sql-db"
+      ? "Use the Azure SQL Database server hostname ending in .database.windows.net"
+      : form.targetType === "fabric-sql"
+        ? "Use the Fabric SQL hostname ending in .datawarehouse.fabric.microsoft.com"
+        : form.targetType === "sql-mi"
+          ? "Use the Managed Instance hostname; instance name is usually not required."
+          : "Use SQL Server hostname or FQDN. Include instance name below when applicable.";
 
   function updateField(name: string, value: string) {
     setForm((prev) => ({ ...prev, [name]: value }));
@@ -43,9 +64,10 @@ export function ServerSetupPage() {
         body: JSON.stringify({
           name: form.serverName,
           hostname: form.hostname,
-          instanceName: form.instanceName || undefined,
+          instanceName: isDatabaseScopedTarget ? undefined : form.instanceName || undefined,
           port: Number(form.port),
-          environment: form.environment
+          environment: form.environment,
+          targetType: form.targetType
         })
       });
 
@@ -58,7 +80,7 @@ export function ServerSetupPage() {
           serverId: server.ServerId,
           hostname: form.hostname,
           port: Number(form.port),
-          instanceName: form.instanceName || null,
+          instanceName: isDatabaseScopedTarget ? null : form.instanceName || null,
           authType: form.authType,
           username: form.username,
           password: form.password,
@@ -118,9 +140,24 @@ export function ServerSetupPage() {
         </CardHeader>
         <CardContent className="grid gap-3 md:grid-cols-2">
           <Input placeholder="Server display name" value={form.serverName} onChange={(e) => updateField("serverName", e.target.value)} />
-          <Input placeholder="Hostname / FQDN" value={form.hostname} onChange={(e) => updateField("hostname", e.target.value)} />
-          <Input placeholder="Instance name (optional)" value={form.instanceName} onChange={(e) => updateField("instanceName", e.target.value)} />
+          <div className="space-y-1">
+            <Input placeholder={hostnamePlaceholder} value={form.hostname} onChange={(e) => updateField("hostname", e.target.value)} />
+            <p className="text-xs text-slate-400">{hostnameHint}</p>
+          </div>
+          {isDatabaseScopedTarget ? (
+            <div className="rounded-lg border border-border bg-slate-900/40 px-3 py-2 text-xs text-slate-400">
+              Instance name is not used for this target type.
+            </div>
+          ) : (
+            <Input placeholder="Instance name (optional)" value={form.instanceName} onChange={(e) => updateField("instanceName", e.target.value)} />
+          )}
           <Input placeholder="Port" value={form.port} onChange={(e) => updateField("port", e.target.value)} />
+          <Select value={form.targetType} onChange={(e) => updateField("targetType", e.target.value)}>
+            <option value="on-prem">On-Prem SQL Server</option>
+            <option value="sql-mi">Azure SQL Managed Instance</option>
+            <option value="azure-sql-db">Azure SQL Database</option>
+            <option value="fabric-sql">Microsoft Fabric SQL</option>
+          </Select>
           <Select value={form.environment} onChange={(e) => updateField("environment", e.target.value)}>
             <option value="production">production</option>
             <option value="staging">staging</option>

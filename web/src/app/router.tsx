@@ -13,6 +13,7 @@ import { ServerDetailPage } from "@/pages/server-detail-page";
 import { SetupWizardPage } from "@/pages/setup-wizard-page";
 import { ServersPage } from "@/pages/servers-page";
 import { SettingsPage } from "@/pages/settings-page";
+import { SecurityPosturePage } from "@/pages/security-posture-page";
 import { SqlQueriesPage } from "@/pages/sql-queries-page";
 import { useAuth } from "@/lib/auth";
 
@@ -44,6 +45,7 @@ export function AppRouter() {
         <Route path="/collector-setup" element={<CollectorSetupPage />} />
         <Route path="/sql-queries" element={<SqlQueriesPage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/security-posture" element={<SecurityPosturePage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

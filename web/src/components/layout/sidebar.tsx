@@ -1,4 +1,4 @@
-import { Database, HardDrive, Home, LayoutList, Link2, Logs, LogOut, PlusCircle, Server, Settings } from "lucide-react";
+import { Database, HardDrive, Home, LayoutList, Link2, Logs, LogOut, PlusCircle, Server, Settings, ShieldAlert } from "lucide-react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/cn";
 import { useAuth } from "@/lib/auth";
@@ -11,6 +11,7 @@ const navItems = [
   { to: "/capacity", label: "Capacity", icon: HardDrive },
   { to: "/connections", label: "Connections", icon: Link2 },
   { to: "/collector-setup", label: "Collector Setup", icon: Database },
+  { to: "/security-posture", label: "Security Posture", icon: ShieldAlert },
   { to: "/settings", label: "Settings", icon: Settings }
 ];
 

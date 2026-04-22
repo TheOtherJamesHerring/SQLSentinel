@@ -9,6 +9,7 @@ import { eventsRouter } from "./events.js";
 import { capacityRouter } from "./capacity.js";
 import { collectorRouter } from "./collector.js";
 import alertDispatchRouter from "./alert-dispatch.js";
+import { securityAuditRouter } from "./security-audit.js";
 import { settingsRouter } from "./settings.js";
 
 export const apiRouter = Router();
@@ -23,4 +24,5 @@ apiRouter.use("/capacity", capacityRouter);
 apiRouter.use("/connections", connectionsRouter);
 apiRouter.use("/collect", collectorRouter);
 apiRouter.use("/alerts", alertDispatchRouter);
+apiRouter.use("/security-audit", securityAuditRouter);
 apiRouter.use("/settings", settingsRouter);

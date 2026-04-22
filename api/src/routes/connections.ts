@@ -7,6 +7,71 @@ import { decryptConnectionSecret, encryptConnectionSecret } from "../utils/conne
 export const connectionsRouter = Router();
 connectionsRouter.use(requireAuth);
 
+const DEFAULT_ENTRA_PUBLIC_CLIENT_ID = "04b07795-8ddb-461a-bbee-02f9e1bf7b46";
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message && error.message.trim()) {
+    return error.message;
+  }
+
+  if (error && typeof error === "object") {
+    const e = error as {
+      message?: unknown;
+      code?: unknown;
+      name?: unknown;
+      originalError?: { message?: unknown; info?: { message?: unknown } };
+      errors?: Array<{ message?: unknown }>;
+      precedingErrors?: Array<{ message?: unknown }>;
+    };
+
+    const candidates: unknown[] = [
+      e.originalError?.message,
+      e.originalError?.info?.message,
+      e.errors?.[0]?.message,
+      e.precedingErrors?.[0]?.message,
+      e.message
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate === "string" && candidate.trim()) {
+        return candidate;
+      }
+    }
+
+    const code = typeof e.code === "string" ? e.code : "";
+    const name = typeof e.name === "string" ? e.name : "";
+    if (code || name) {
+      return `Connection failed (${[name, code].filter(Boolean).join(": ")})`;
+    }
+  }
+
+  return "Connection failed. The server returned an empty error payload.";
+}
+
+function getConnectionTestErrorMessage(
+  error: unknown,
+  context: { targetType?: string; authType?: string }
+): string {
+  const base = getErrorMessage(error);
+  const normalized = normalizeAuthType(context.authType);
+  const targetType = String(context.targetType ?? "").toLowerCase();
+
+  const isGenericConnectionError =
+    base === "Connection failed. The server returned an empty error payload." ||
+    base.includes("ConnectionError") ||
+    base === "Connection failed";
+
+  if (isGenericConnectionError && targetType === "fabric-sql" && normalized === "entra_password") {
+    return "Fabric SQL login failed with a generic connection error. This usually means username/password auth is blocked by MFA or Conditional Access. Try Microsoft Entra Service Principal auth, or test interactive MFA with SSMS/Azure Data Studio. If Entra Password must be used, verify tenant allows non-interactive password flow for this account.";
+  }
+
+  if (isGenericConnectionError && normalized === "entra_password") {
+    return "Microsoft Entra Password login failed with a generic connection error. Verify tenant ID, username/password, and that non-interactive password auth is allowed by tenant policy (no MFA/Conditional Access block).";
+  }
+
+  return base;
+}
+
 function sanitizeProfile<T extends Record<string, unknown>>(row: T) {
   const { EncryptedSecret, ...safe } = row;
   return safe;
@@ -14,8 +79,14 @@ function sanitizeProfile<T extends Record<string, unknown>>(row: T) {
 
 function normalizeAuthType(value: unknown) {
   const text = String(value ?? "").trim().toLowerCase();
+  if (text === "entra_password" || (text.includes("entra") && text.includes("password"))) {
+    return "entra_password" as const;
+  }
   if (text === "entra_sp" || (text.includes("entra") && text.includes("service"))) {
     return "entra_sp" as const;
+  }
+  if (text === "entra_mfa" || (text.includes("entra") && text.includes("mfa"))) {
+    return "entra_mfa" as const;
   }
   if (text.includes("windows")) {
     return "windows" as const;
@@ -86,7 +157,7 @@ connectionsRouter.post("/", requireRole(["admin"]), async (req, res, next) => {
       INSERT INTO ConnectionProfiles(Name, Hostname, Port, InstanceName, AuthType, Username, SecretEnvKey, TenantId, ClientId, EncryptedSecret, [Database], Encrypt, TrustServerCert, ConnectionTimeout, Environment, Notes)
       OUTPUT INSERTED.*
       VALUES(@name, @hostname, @port, @instanceName, @authType, @username, @secretEnvKey, @tenantId, @clientId, @encryptedSecret, @database, @encrypt, @trustServerCert, @connectionTimeout, @environment, @notes)
-    `, { ...body, encryptedSecret });
+    `, { ...body, encryptedSecret, secretEnvKey: body.secretEnvKey ?? null });
     res.status(201).json({ data: sanitizeProfile(rows[0]) });
   } catch (error) {
     next(error);
@@ -119,7 +190,7 @@ connectionsRouter.patch("/:id", requireRole(["admin"]), async (req, res, next) =
           UpdatedDate = GETUTCDATE()
       OUTPUT INSERTED.*
       WHERE ProfileId = @id
-    `, { ...body, encryptedSecret, id: req.params.id });
+    `, { ...body, encryptedSecret, secretEnvKey: body.secretEnvKey ?? null, id: req.params.id });
     res.json({ data: sanitizeProfile(rows[0]) });
   } catch (error) {
     next(error);
@@ -137,41 +208,118 @@ connectionsRouter.delete("/:id", requireRole(["admin"]), async (req, res, next) 
 
 // Test a connection using raw credentials (no saved profile needed — used during onboarding wizard)
 connectionsRouter.post("/test-inline", requireAuth, async (req, res, next) => {
+  let requestContext: { targetType?: string; authType?: string } = {};
   try {
-    const { hostname, port, instanceName, username, password, database, encrypt, trustServerCert } = req.body as {
+    const { 
+      targetType, authType, hostname, port, instanceName, username, password, tenantId, clientId, database, encrypt, trustServerCert 
+    } = req.body as {
+      targetType?: string;
+      authType?: string;
       hostname: string;
       port?: number;
       instanceName?: string;
       username: string;
       password: string;
+      tenantId?: string;
+      clientId?: string;
       database?: string;
       encrypt?: boolean;
       trustServerCert?: boolean;
     };
-    if (!hostname || !username || password === undefined) {
-      res.status(400).json({ message: "hostname, username, and password are required" });
+
+    if (!hostname) {
+      res.status(400).json({ message: "hostname is required" });
       return;
     }
-    const config: sql.config = {
+
+    // Platform-specific validation
+    const dbTargetType = targetType || "on-prem";
+    const normalizedAuthType = normalizeAuthType(authType);
+    requestContext = { targetType: dbTargetType, authType: normalizedAuthType };
+    if (dbTargetType === "azure-sql-db" && !hostname.toLowerCase().includes(".database.windows.net")) {
+      res.status(400).json({ message: "Azure SQL Database hostname must contain '.database.windows.net'" });
+      return;
+    }
+    if (dbTargetType === "fabric-sql" && !hostname.toLowerCase().includes(".datawarehouse.fabric.microsoft.com")) {
+      res.status(400).json({ message: "Fabric SQL hostname must contain '.datawarehouse.fabric.microsoft.com'" });
+      return;
+    }
+
+    // For Azure SQL DB and Fabric SQL, ignore instanceName (database-level scope only)
+    const normalizedInstanceName = (dbTargetType === "azure-sql-db" || dbTargetType === "fabric-sql") ? undefined : instanceName;
+
+    const baseConfig: sql.config = {
       server: hostname,
       port: port ?? 1433,
-      ...(instanceName ? { options: { instanceName } } : {}),
-      user: username,
-      password,
+      ...(normalizedInstanceName ? { options: { instanceName: normalizedInstanceName } } : {}),
       database: database ?? "master",
       options: {
-        ...(instanceName ? { instanceName } : {}),
+        ...(normalizedInstanceName ? { instanceName: normalizedInstanceName } : {}),
         encrypt: encrypt ?? true,
         trustServerCertificate: trustServerCert ?? true
       },
       connectionTimeout: 15000
     };
+
+    if (normalizedAuthType === "entra_mfa") {
+      res.status(400).json({
+        message: "Interactive Microsoft Entra MFA is not supported by this server-side test flow. Use Entra Password, Entra Service Principal, or test with SSMS/Azure Data Studio."
+      });
+      return;
+    }
+
+    const config: sql.config = normalizedAuthType === "entra_sp"
+      ? {
+          ...baseConfig,
+          authentication: {
+            type: "azure-active-directory-service-principal-secret",
+            options: {
+              tenantId: String(tenantId ?? ""),
+              clientId: String(clientId || username || ""),
+              clientSecret: String(password ?? "")
+            }
+          }
+        }
+      : normalizedAuthType === "entra_password"
+        ? {
+            ...baseConfig,
+            authentication: {
+              type: "azure-active-directory-password",
+              options: {
+                userName: String(username ?? ""),
+                password: String(password ?? ""),
+                clientId: String(clientId ?? DEFAULT_ENTRA_PUBLIC_CLIENT_ID),
+                tenantId: String(tenantId ?? "")
+              }
+            }
+          }
+        : {
+            ...baseConfig,
+            user: username,
+            password
+          };
+
+    if ((normalizedAuthType === "sql" || normalizedAuthType === "windows" || normalizedAuthType === "entra_password") && (!username || password === undefined)) {
+      res.status(400).json({ message: "username and password are required for this authentication type" });
+      return;
+    }
+
+    if (normalizedAuthType === "entra_password" && !tenantId) {
+      res.status(400).json({ message: "tenantId is required for Microsoft Entra Password authentication" });
+      return;
+    }
+
+    if (normalizedAuthType === "entra_sp" && (!password || !(clientId || username))) {
+      res.status(400).json({ message: "client ID (or username) and client secret are required for Entra service principal authentication" });
+      return;
+    }
+    
     const pool = await sql.connect(config);
     const result = await pool.request().query("SELECT @@VERSION AS [version], @@SERVERNAME AS [serverName], DB_NAME() AS [dbName]");
     await pool.close();
-    res.json({ data: { status: "online", ...result.recordset[0] } });
-  } catch (error: any) {
-    res.status(400).json({ message: error?.message ?? "Connection failed" });
+    res.json({ data: { status: "online", targetType: dbTargetType, ...result.recordset[0] } });
+  } catch (error: unknown) {
+    res.status(400).json({ message: getConnectionTestErrorMessage(error, requestContext) });
   }
 });
 
@@ -202,6 +350,20 @@ connectionsRouter.post("/:id/test", requireRole(["admin"]), async (req, res, nex
       connectionTimeout: profile.ConnectionTimeout * 1000
     };
 
+    if (authType === "entra_mfa") {
+      res.status(400).json({
+        message: "Interactive Microsoft Entra MFA is not supported by this API test route. Use Entra Password or Entra Service Principal credentials."
+      });
+      return;
+    }
+
+    if (authType === "entra_password" && !profile.TenantId) {
+      res.status(400).json({
+        message: "Connection profile is missing TenantId required for Microsoft Entra Password authentication."
+      });
+      return;
+    }
+
     const config: sql.config = authType === "entra_sp"
       ? {
           ...baseConfig,
@@ -214,6 +376,19 @@ connectionsRouter.post("/:id/test", requireRole(["admin"]), async (req, res, nex
             }
           }
         }
+      : authType === "entra_password"
+        ? {
+            ...baseConfig,
+            authentication: {
+              type: "azure-active-directory-password",
+              options: {
+                userName: String(profile.Username ?? ""),
+                password: secret,
+                clientId: String(profile.ClientId ?? DEFAULT_ENTRA_PUBLIC_CLIENT_ID),
+                tenantId: String(profile.TenantId ?? "")
+              }
+            }
+          }
       : {
           ...baseConfig,
           user: profile.Username,

@@ -145,6 +145,26 @@ function deriveBackupStatus(db: z.infer<typeof databaseHealthSchema>[number]) {
   return "healthy";
 }
 
+async function rejectIfCollectorDisabled(res: { status: (code: number) => { json: (body: unknown) => void } }, serverId?: string) {
+  if (!serverId) return false;
+
+  const [server] = await query<{ MonitoringEnabled?: unknown; CollectorEnabled?: unknown }>(
+    `SELECT TOP 1 MonitoringEnabled, COALESCE(CollectorEnabled, 1) AS CollectorEnabled
+     FROM Servers
+     WHERE ServerId = @serverId`,
+    { serverId }
+  );
+
+  if (!server) return false;
+
+  const monitoringEnabled = Number(server.MonitoringEnabled ?? 1) === 1;
+  const collectorEnabled = Number(server.CollectorEnabled ?? 1) === 1;
+  if (monitoringEnabled && collectorEnabled) return false;
+
+  res.status(202).json({ data: { ignored: true, reason: "collector disabled", serverId } });
+  return true;
+}
+
 collectorRouter.post("/metrics", async (req, res, next) => {
   const parsed = metricSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -153,6 +173,8 @@ collectorRouter.post("/metrics", async (req, res, next) => {
   }
 
   try {
+    if (await rejectIfCollectorDisabled(res, parsed.data[0]?.serverId)) return;
+
     for (const metric of parsed.data) {
       let resolvedDatabaseId: string | null = metric.databaseId ?? null;
       if (!resolvedDatabaseId && metric.metricName) {
@@ -193,6 +215,8 @@ collectorRouter.post("/databases", async (req, res, next) => {
   }
 
   try {
+    if (await rejectIfCollectorDisabled(res, parsed.data[0]?.serverId)) return;
+
     for (const db of parsed.data) {
       await query(
         `MERGE Databases AS target
@@ -266,6 +290,8 @@ collectorRouter.post("/disks", async (req, res, next) => {
   }
 
   try {
+    if (await rejectIfCollectorDisabled(res, parsed.data[0]?.serverId)) return;
+
     for (const disk of parsed.data) {
       await query(
         `MERGE DiskVolumes AS target
@@ -308,6 +334,8 @@ collectorRouter.post("/disks", async (req, res, next) => {
 collectorRouter.post("/events", async (req, res, next) => {
   try {
     const events = req.body as Array<Record<string, unknown>>;
+    if (await rejectIfCollectorDisabled(res, typeof events[0]?.serverId === "string" ? events[0].serverId : undefined)) return;
+
     for (const event of events) {
       await query(
         `INSERT INTO LogEvents(ServerId, DatabaseName, Source, EventId, Severity, Message, EventTime, Category)
@@ -339,6 +367,8 @@ collectorRouter.post("/alerts", async (req, res, next) => {
   }
 
   try {
+    if (await rejectIfCollectorDisabled(res, parsed.data[0]?.serverId)) return;
+
     for (const alert of parsed.data) {
       await query(
         `INSERT INTO Alerts(ServerId, DatabaseId, AlertType, Severity, Title, Message, MetricValue, ThresholdValue, TriggeredAt)
@@ -365,6 +395,8 @@ collectorRouter.post("/alerts", async (req, res, next) => {
 collectorRouter.post("/blocking", async (req, res, next) => {
   try {
     const sessions = req.body as Array<Record<string, unknown>>;
+    if (await rejectIfCollectorDisabled(res, typeof sessions[0]?.serverId === "string" ? sessions[0].serverId : undefined)) return;
+
     for (const session of sessions) {
       await query(
         `INSERT INTO BlockingSessions(ServerId, SessionId, BlockingSessionId, DatabaseName, LoginName, HostName, ProgramName, WaitType, WaitTimeMs, WaitResource, QueryText, Status, CpuTimeMs, LogicalReads, IsHeadBlocker, BlockedCount)
@@ -382,6 +414,8 @@ collectorRouter.post("/blocking", async (req, res, next) => {
 collectorRouter.post("/dbcc", async (req, res, next) => {
   try {
     const results = req.body as Array<Record<string, unknown>>;
+    if (await rejectIfCollectorDisabled(res, typeof results[0]?.serverId === "string" ? results[0].serverId : undefined)) return;
+
     for (const result of results) {
       await query(
         `INSERT INTO DBCCResults(ServerId, DatabaseId, DatabaseName, CheckType, RunDate, DurationSeconds, Status, ErrorsFound, WarningsFound, RepairNeeded, OutputSummary, DetailedResults)
@@ -398,6 +432,9 @@ collectorRouter.post("/dbcc", async (req, res, next) => {
 
 collectorRouter.post("/heartbeat", async (req, res, next) => {
   try {
+    const serverId = typeof req.body?.serverId === "string" ? req.body.serverId : undefined;
+    if (await rejectIfCollectorDisabled(res, serverId)) return;
+
     await query(
       `UPDATE Servers
        SET Status = @status,
@@ -443,6 +480,8 @@ collectorRouter.post("/query-store", async (req, res, next) => {
   }
 
   try {
+    if (await rejectIfCollectorDisabled(res, parsed.data[0]?.serverId)) return;
+
     if (!queryStoreTableReady) {
       await ensureQueryStoreTable();
       queryStoreTableReady = true;
@@ -652,6 +691,8 @@ collectorRouter.post("/schema-objects", async (req, res, next) => {
   }
 
   try {
+    if (await rejectIfCollectorDisabled(res, parsed.data.serverId)) return;
+
     if (!schemaTablesEnsured) {
       await ensureSchemaStatsTables();
       schemaTablesEnsured = true;
@@ -735,6 +776,8 @@ collectorRouter.post("/backup-failures", async (req, res, next) => {
   }
 
   try {
+    if (await rejectIfCollectorDisabled(res, parsed.data[0]?.serverId)) return;
+
     let inserted = 0;
     for (const item of parsed.data) {
       await query(
@@ -767,6 +810,8 @@ collectorRouter.post("/agent-jobs", async (req, res, next) => {
   }
 
   try {
+    if (await rejectIfCollectorDisabled(res, parsed.data[0]?.serverId)) return;
+
     let inserted = 0;
     for (const item of parsed.data) {
       await query(

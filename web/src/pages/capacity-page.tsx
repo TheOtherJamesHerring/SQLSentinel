@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { BarComparisonChart } from "@/components/charts/bar-comparison-chart";
 import { RiskGauge } from "@/components/ui/risk-gauge";
 import { Select } from "@/components/ui/select";
 import { useApiQuery } from "@/hooks/useApiQuery";
@@ -10,7 +9,6 @@ import {
   CartesianGrid,
   Cell,
   ComposedChart,
-  Legend,
   Line,
   Pie,
   PieChart,
@@ -22,6 +20,7 @@ import {
   XAxis,
   YAxis
 } from "recharts";
+
 
 interface ForecastRow {
   MetricName: string;
@@ -60,8 +59,13 @@ interface CapacityTrendModel {
   currentPoint: TrendPoint;
   currentValue: number;
   projectedValue: number;
+  projectedCrossStep: number | null;
+  avgStepDays: number;
+  daysToCeiling: number | null;
+  trajectoryNote: string;
   lowThreshold: number;
   highThreshold: number;
+  ceilingValue: number;
   yMin: number;
   yMax: number;
   isPercentScale: boolean;
@@ -116,6 +120,11 @@ function buildTrendModel(rows: ForecastRow[]): CapacityTrendModel | null {
   const first = actual[0];
   const last = actual[actual.length - 1];
   const slope = actual.length > 1 ? (last.v - first.v) / (actual.length - 1) : 0;
+  const avgStepMs =
+    actual.length > 1
+      ? (actual[actual.length - 1].t - actual[0].t) / (actual.length - 1)
+      : 24 * 60 * 60 * 1000;
+  const avgStepDays = Math.max(1, Math.round(avgStepMs / (24 * 60 * 60 * 1000)));
 
   const projectedSteps = 6;
   const points: TrendPoint[] = actual.map((p, i) => ({
@@ -145,6 +154,24 @@ function buildTrendModel(rows: ForecastRow[]): CapacityTrendModel | null {
   const isPercentScale = min >= 0 && max <= 100;
   const lowThreshold = isPercentScale ? 60 : min + range * 0.35;
   const highThreshold = isPercentScale ? 85 : min + range * 0.75;
+  const ceilingValue = isPercentScale ? 100 : highThreshold;
+  const projectedCross = points.find((p) => p.x.startsWith("future-") && (p.projected ?? -Infinity) >= ceilingValue);
+  const projectedCrossStep = projectedCross ? Number(projectedCross.x.replace("future-", "")) : null;
+  const stepsToCeiling =
+    slope > 0 && last.v < ceilingValue
+      ? (ceilingValue - last.v) / slope
+      : null;
+  const daysToCeiling = stepsToCeiling !== null && Number.isFinite(stepsToCeiling)
+    ? Math.max(1, Math.round(stepsToCeiling * avgStepDays))
+    : null;
+  const trajectoryNote =
+    slope <= 0
+      ? "Stable utilization"
+      : daysToCeiling === null
+      ? "Linear growth continuing"
+      : isPercentScale
+      ? `~${daysToCeiling} days to capacity`
+      : `~${daysToCeiling} days to high-pressure ceiling`;
 
   const yMin = isPercentScale ? 0 : Math.max(0, min - range * 0.1);
   const yMax = isPercentScale ? 100 : max + range * 0.15;
@@ -155,8 +182,13 @@ function buildTrendModel(rows: ForecastRow[]): CapacityTrendModel | null {
     currentPoint: points[actual.length - 1],
     currentValue: last.v,
     projectedValue: points[points.length - 1].projected ?? last.v,
+    projectedCrossStep,
+    avgStepDays,
+    daysToCeiling,
+    trajectoryNote,
     lowThreshold,
     highThreshold,
+    ceilingValue,
     yMin,
     yMax,
     isPercentScale
@@ -178,6 +210,42 @@ function convertSize(mb: number, unit: CapacityUnit): number {
 function formatSize(value: number, unit: CapacityUnit): string {
   const decimals = unit === "TB" ? 2 : 1;
   return `${value.toFixed(decimals)} ${unit}`;
+}
+
+function saturationColor(percent: number): string {
+  if (percent >= 95) return "#8f2d2d";
+  if (percent >= 85) return "#ad6f2f";
+  if (percent >= 70) return "#68788f";
+  return "#8a97a8";
+}
+
+/** Bars for systems under pressure are fully opaque; healthy systems recede via opacity. */
+function saturationOpacity(percent: number): number {
+  if (percent >= 95) return 1;
+  if (percent >= 85) return 0.92;
+  if (percent >= 70) return 0.75;
+  return 0.42;
+}
+
+/** Track background: darker for critical rows to increase figure/ground contrast. */
+function trackColor(percent: number): string {
+  if (percent >= 95) return "#e8d0d0";
+  if (percent >= 85) return "#ecddd0";
+  return "#e6e9ee";
+}
+
+/** Y-axis label color: constrained systems are fully foreground; stable systems are muted. */
+function labelColor(percent: number): string {
+  if (percent >= 85) return "#1a1a1a";
+  if (percent >= 70) return "#4a5568";
+  return "#94a3b8";
+}
+
+function utilizationStatus(percent: number): string {
+  if (percent >= 95) return "Near full";
+  if (percent >= 85) return "High pressure";
+  if (percent >= 70) return "Watch";
+  return "Stable";
 }
 
 export function CapacityPage() {
@@ -229,16 +297,34 @@ export function CapacityPage() {
   }));
 
   const totals = allDatabaseChartData.map((db) => db.totalSize);
-  const lowMarker = percentile(totals, 0.35);
-  const highMarker = percentile(totals, 0.8);
   const maxTotal = Math.max(...totals, 1);
+  // Sort high→low so the most-constrained databases appear at top of the chart
+  const databaseSaturationData = allDatabaseChartData
+    .map((db) => ({
+      ...db,
+      usedPercent: (db.totalSize / maxTotal) * 100,
+      status: utilizationStatus((db.totalSize / maxTotal) * 100)
+    }))
+    .sort((a, b) => b.usedPercent - a.usedPercent);
+  // Sort disk volumes high→low for the same reason
+  const diskChartData = (disks.data ?? [])
+    .slice(0, 10)
+    .map((row) => ({
+      name: row.VolumeName,
+      usedPercent: Number(row.UsedPercent) || 0,
+      status: utilizationStatus(Number(row.UsedPercent) || 0)
+    }))
+    .sort((a, b) => b.usedPercent - a.usedPercent);
 
   const detailBreakdown = selectedDatabase
     ? [
-        { name: "Data", value: convertSize(selectedDatabase.dataMb, unit), color: "#0ea5e9" },
-        { name: "Log", value: convertSize(selectedDatabase.logMb, unit), color: "#8b5cf6" }
+        { name: "Data", value: convertSize(selectedDatabase.dataMb, unit), color: "#54657a" },
+        { name: "Log", value: convertSize(selectedDatabase.logMb, unit), color: "#8d98a6" }
       ]
     : [];
+  const disksAbove85 = diskChartData.filter((d) => d.usedPercent >= 85).length;
+  const disksAbove95 = diskChartData.filter((d) => d.usedPercent >= 95).length;
+  const projectedWithin60 = trend?.daysToCeiling !== null && trend?.daysToCeiling !== undefined && trend.daysToCeiling <= 60;
 
   return (
     <div className="space-y-6">
@@ -287,7 +373,7 @@ export function CapacityPage() {
               <div className="h-80 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
-                    data={allDatabaseChartData}
+                    data={databaseSaturationData}
                     layout="vertical"
                     margin={{ top: 8, right: 12, bottom: 8, left: 8 }}
                     onClick={(state: any) => {
@@ -297,13 +383,33 @@ export function CapacityPage() {
                       setDatabaseView("single");
                     }}
                   >
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" horizontal={true} vertical={false} />
-                    <XAxis type="number" domain={[0, maxTotal * 1.15]} tick={{ fontSize: 11 }} tickFormatter={(value) => formatSize(Number(value), unit)} />
-                    <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 11 }} />
+                    <CartesianGrid strokeDasharray="2 4" stroke="var(--color-border)" horizontal={true} vertical={false} />
+                    <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 11 }} tickFormatter={(value) => `${Number(value)}%`} />
+                    <YAxis
+                      type="category"
+                      dataKey="name"
+                      width={120}
+                      tick={(props: any) => {
+                        const entry = databaseSaturationData[props.index];
+                        return (
+                          <text
+                            x={props.x}
+                            y={props.y}
+                            textAnchor="end"
+                            dominantBaseline="middle"
+                            fontSize={11}
+                            fontWeight={entry && entry.usedPercent >= 85 ? 700 : 400}
+                            fill={labelColor(entry?.usedPercent ?? 0)}
+                          >
+                            {props.payload.value}
+                          </text>
+                        );
+                      }}
+                    />
                     <Tooltip
-                      formatter={(value, name) => {
-                        const label = name === "dataSize" ? "Data" : name === "logSize" ? "Log" : String(name);
-                        return [formatSize(Number(value ?? 0), unit), label];
+                      formatter={(value, name, item: any) => {
+                        if (name === "usedPercent") return [`${Number(value ?? 0).toFixed(1)}%`, "Relative saturation"];
+                        return [formatSize(Number(item?.payload?.totalSize ?? 0), unit), "Current total size"];
                       }}
                       contentStyle={{
                         background: "var(--color-card)",
@@ -313,30 +419,50 @@ export function CapacityPage() {
                         color: "var(--color-foreground)"
                       }}
                     />
-                    <Legend formatter={(value) => (value === "dataSize" ? "Data file size" : "Log file size")} />
-
-                    <ReferenceArea x1={0} x2={lowMarker} fill="#22c55e" fillOpacity={0.12} />
-                    <ReferenceArea x1={highMarker} x2={maxTotal * 1.15} fill="#ef4444" fillOpacity={0.12} />
                     <ReferenceLine
-                      x={lowMarker}
-                      stroke="#22c55e"
+                      x={70}
+                      stroke="#7a8898"
                       strokeDasharray="4 3"
-                      label={{ value: "Low", fill: "#22c55e", fontSize: 10, position: "insideTopLeft" }}
+                      label={{ value: "70%", fill: "#7a8898", fontSize: 10, position: "insideTopLeft" }}
                     />
                     <ReferenceLine
-                      x={highMarker}
-                      stroke="#ef4444"
+                      x={85}
+                      stroke="#ad6f2f"
                       strokeDasharray="4 3"
-                      label={{ value: "High", fill: "#ef4444", fontSize: 10, position: "insideTopRight" }}
+                      label={{ value: "85%", fill: "#ad6f2f", fontSize: 10, position: "insideTop" }}
                     />
-
-                    <Bar dataKey="dataSize" stackId="size" fill="#0ea5e9" radius={[0, 0, 0, 0]} cursor="pointer" />
-                    <Bar dataKey="logSize" stackId="size" fill="#8b5cf6" radius={[0, 6, 6, 0]} cursor="pointer" />
+                    <ReferenceLine
+                      x={95}
+                      stroke="#8f2d2d"
+                      strokeDasharray="4 3"
+                      label={{ value: "95%", fill: "#8f2d2d", fontSize: 10, position: "insideTopRight" }}
+                    />
+                    <Bar
+                      dataKey="usedPercent"
+                      radius={[0, 6, 6, 0]}
+                      cursor="pointer"
+                      background={(props: any) => (
+                        <rect
+                          x={props.x} y={props.y}
+                          width={props.width} height={props.height}
+                          fill={trackColor(props.value as number ?? props?.usedPercent ?? 0)}
+                          rx={6}
+                        />
+                      )}
+                    >
+                      {databaseSaturationData.map((entry) => (
+                        <Cell
+                          key={entry.id}
+                          fill={saturationColor(entry.usedPercent)}
+                          fillOpacity={saturationOpacity(entry.usedPercent)}
+                        />
+                      ))}
+                    </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </div>
               <p className="text-xs text-muted">
-                Green area marks smaller database footprints. Red area highlights the largest databases to prioritize for growth planning. Unit and server filters apply live.
+                Saturation bars show each database as a percentage of the largest footprint in the filtered scope. Color intensity increases as saturation pressure rises through 70%, 85%, and 95%.
               </p>
             </>
           ) : selectedDatabase ? (
@@ -350,7 +476,6 @@ export function CapacityPage() {
                       ))}
                     </Pie>
                     <Tooltip formatter={(value) => formatSize(Number(value ?? 0), unit)} />
-                    <Legend />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
@@ -396,12 +521,68 @@ export function CapacityPage() {
         <Card>
           <CardHeader><CardTitle>Disk Volumes Quick Scan</CardTitle></CardHeader>
           <CardContent>
-            <BarComparisonChart
-              warnThreshold={80}
-              criticalThreshold={90}
-              showThresholdLine
-              data={(disks.data ?? []).slice(0, 10).map((row) => ({ name: row.VolumeName, value: Number(row.UsedPercent) || 0 }))}
-            />
+            <div className="h-72 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={diskChartData} layout="vertical" margin={{ top: 8, right: 12, bottom: 8, left: 8 }}>
+                  <CartesianGrid strokeDasharray="2 4" stroke="var(--color-border)" horizontal={true} vertical={false} />
+                  <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 11 }} tickFormatter={(value) => `${Number(value)}%`} />
+                  <YAxis
+                    type="category"
+                    dataKey="name"
+                    width={110}
+                    tick={(props: any) => {
+                      const entry = diskChartData[props.index];
+                      return (
+                        <text
+                          x={props.x}
+                          y={props.y}
+                          textAnchor="end"
+                          dominantBaseline="middle"
+                          fontSize={11}
+                          fontWeight={entry && entry.usedPercent >= 85 ? 700 : 400}
+                          fill={labelColor(entry?.usedPercent ?? 0)}
+                        >
+                          {props.payload.value}
+                        </text>
+                      );
+                    }}
+                  />
+                  <Tooltip
+                    formatter={(value) => [`${Number(value ?? 0).toFixed(1)}%`, "Used capacity"]}
+                    contentStyle={{
+                      background: "var(--color-card)",
+                      border: "1px solid var(--color-border)",
+                      borderRadius: 8,
+                      fontSize: 12,
+                      color: "var(--color-foreground)"
+                    }}
+                  />
+                  <ReferenceLine x={70} stroke="#7a8898" strokeDasharray="4 3" />
+                  <ReferenceLine x={85} stroke="#ad6f2f" strokeDasharray="4 3" />
+                  <ReferenceLine x={95} stroke="#8f2d2d" strokeDasharray="4 3" />
+                  <Bar
+                    dataKey="usedPercent"
+                    radius={[0, 6, 6, 0]}
+                    background={(props: any) => (
+                      <rect
+                        x={props.x} y={props.y}
+                        width={props.width} height={props.height}
+                        fill={trackColor(props.value as number ?? 0)}
+                        rx={6}
+                      />
+                    )}
+                  >
+                    {diskChartData.map((entry) => (
+                      <Cell
+                        key={entry.name}
+                        fill={saturationColor(entry.usedPercent)}
+                        fillOpacity={saturationOpacity(entry.usedPercent)}
+                      />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           </CardContent>
         </Card>
         <Card>
@@ -409,7 +590,19 @@ export function CapacityPage() {
           <CardContent className="space-y-4">
             {trend ? (
               <>
-                <div className="rounded-lg border border-border bg-surface-2/40 p-3">
+                <div
+                  className="rounded-lg border p-3"
+                  style={{
+                    background:
+                      trend.currentValue >= trend.highThreshold
+                        ? "rgba(173,111,47,0.08)"
+                        : "var(--color-surface-2)",
+                    borderColor:
+                      trend.currentValue >= trend.highThreshold
+                        ? "#ad6f2f"
+                        : "var(--color-border)"
+                  }}
+                >
                   <p className="text-xs text-muted">Tracking metric</p>
                   <p className="text-sm font-medium text-foreground">{trend.metricName}</p>
                   <div className="mt-3 flex items-center justify-between gap-4 text-xs text-muted">
@@ -420,6 +613,7 @@ export function CapacityPage() {
                       Projected (+6): <strong className="text-foreground">{trend.projectedValue.toFixed(1)}{trend.isPercentScale ? "%" : ""}</strong>
                     </span>
                   </div>
+                  <p className="mt-2 text-xs text-muted">{trend.trajectoryNote}</p>
                   {trend.isPercentScale ? (
                     <div className="mt-3 flex items-center gap-2">
                       <span className="text-xs text-muted">Risk</span>
@@ -428,10 +622,78 @@ export function CapacityPage() {
                   ) : null}
                 </div>
 
+                {/* Future risk metrics: days to exhaustion + distance to ceiling */}
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div
+                    className="rounded-lg border p-3"
+                    style={{
+                      background:
+                        trend.daysToCeiling !== null && trend.daysToCeiling <= 30
+                          ? "rgba(143,45,45,0.08)"
+                          : trend.daysToCeiling !== null && trend.daysToCeiling <= 60
+                          ? "rgba(173,111,47,0.08)"
+                          : "var(--color-surface-2)",
+                      borderColor:
+                        trend.daysToCeiling !== null && trend.daysToCeiling <= 30
+                          ? "#8f2d2d"
+                          : trend.daysToCeiling !== null && trend.daysToCeiling <= 60
+                          ? "#ad6f2f"
+                          : "var(--color-border)"
+                    }}
+                  >
+                    <p className="text-xs text-muted">Days to exhaustion</p>
+                    <p
+                      className="mt-1 text-xl font-semibold"
+                      style={{
+                        color:
+                          trend.daysToCeiling === null
+                            ? "var(--color-muted)"
+                            : trend.daysToCeiling <= 30
+                            ? "#8f2d2d"
+                            : trend.daysToCeiling <= 60
+                            ? "#ad6f2f"
+                            : "var(--color-foreground)"
+                      }}
+                    >
+                      {trend.daysToCeiling === null ? "Stable" : `~${trend.daysToCeiling}d`}
+                    </p>
+                    {trend.daysToCeiling !== null && trend.daysToCeiling <= 60 && (
+                      <p className="mt-1 text-xs font-semibold" style={{ color: trend.daysToCeiling <= 30 ? "#8f2d2d" : "#ad6f2f" }}>
+                        {trend.daysToCeiling <= 30 ? "⚠ CRITICAL" : "⚠ HIGH"}
+                      </p>
+                    )}
+                  </div>
+                  <div className="rounded-lg border border-border bg-surface-2/40 p-3">
+                    <p className="text-xs text-muted">Distance to ceiling</p>
+                    <p className="mt-1 text-xl font-semibold text-foreground">
+                      {trend.isPercentScale
+                        ? `${Math.max(0, (trend.ceilingValue - trend.currentValue)).toFixed(1)}%`
+                        : `${Math.max(0, (trend.ceilingValue - trend.currentValue)).toFixed(0)} units`}
+                    </p>
+                    <div className="mt-2 flex h-1.5 w-full overflow-hidden rounded-full bg-border">
+                      <div
+                        style={{
+                          width: `${Math.min(100, (trend.currentValue / trend.ceilingValue) * 100)}%`,
+                          background:
+                            trend.currentValue >= trend.highThreshold
+                              ? "#ad6f2f"
+                              : trend.currentValue >= trend.lowThreshold
+                              ? "#68788f"
+                              : "#8a97a8",
+                          transition: "width 0.3s ease"
+                        }}
+                      />
+                    </div>
+                    <p className="mt-1 text-xs text-muted">
+                      {Math.max(0, (trend.ceilingValue - trend.currentValue)).toFixed(1)}{trend.isPercentScale ? "%" : ""} runway
+                    </p>
+                  </div>
+                </div>
+
                 <div className="h-72 w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <ComposedChart data={trend.points} margin={{ top: 8, right: 8, bottom: 4, left: -8 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} />
+                      <CartesianGrid strokeDasharray="2 4" stroke="var(--color-border)" vertical={false} />
                       <XAxis dataKey="x" tickFormatter={(_value, index) => trend.points[index]?.label ?? ""} tick={{ fontSize: 11 }} tickLine={false} />
                       <YAxis domain={[trend.yMin, trend.yMax]} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
                       <Tooltip
@@ -454,28 +716,72 @@ export function CapacityPage() {
                           color: "var(--color-foreground)"
                         }}
                       />
-                      <Legend formatter={(value) => (value === "actual" ? "Current trend" : "Linear projection")} />
 
-                      <ReferenceArea y1={trend.yMin} y2={trend.lowThreshold} fill="#22c55e" fillOpacity={0.12} />
-                      <ReferenceArea y1={trend.highThreshold} y2={trend.yMax} fill="#ef4444" fillOpacity={0.12} />
-                      <ReferenceLine
-                        y={trend.lowThreshold}
-                        stroke="#22c55e"
-                        strokeDasharray="4 3"
-                        label={{ value: "Low zone", fill: "#22c55e", fontSize: 10, position: "insideTopLeft" }}
+                      <ReferenceArea
+                        x1={trend.currentPoint.x}
+                        x2={
+                          trend.projectedCrossStep ? `future-${trend.projectedCrossStep}` : trend.points[trend.points.length - 1]?.x
+                        }
+                        fill="#ad6f2f"
+                        fillOpacity={0.25}
                       />
                       <ReferenceLine
-                        y={trend.highThreshold}
-                        stroke="#ef4444"
+                        y={trend.ceilingValue}
+                        stroke="#8f2d2d"
                         strokeDasharray="4 3"
-                        label={{ value: "High zone", fill: "#ef4444", fontSize: 10, position: "insideTopRight" }}
+                        label={{
+                          value: trend.isPercentScale ? "Capacity ceiling" : "High-pressure ceiling",
+                          fill: "#8f2d2d",
+                          fontSize: 10,
+                          position: "insideTopRight"
+                        }}
                       />
+                      {/* Milestone markers at 80% and 90% for percent-based metrics */}
+                      {trend.isPercentScale && (
+                        <>
+                          <ReferenceLine
+                            y={80}
+                            stroke="#94a3b8"
+                            strokeDasharray="3 2"
+                            label={{ value: "80%", fill: "#94a3b8", fontSize: 9, position: "insideTopLeft" }}
+                          />
+                          <ReferenceLine
+                            y={90}
+                            stroke="#c9915a"
+                            strokeDasharray="3 2"
+                            label={{ value: "90%", fill: "#c9915a", fontSize: 9, position: "insideTopLeft" }}
+                          />
+                        </>
+                      )}
+                      {trend.projectedCrossStep ? (
+                        <>
+                          <ReferenceLine
+                            x={`future-${trend.projectedCrossStep}`}
+                            stroke="#ad6f2f"
+                            strokeDasharray="4 3"
+                            label={{
+                              value: trend.daysToCeiling ? `~${trend.daysToCeiling}d to full` : "Projected saturation",
+                              fill: "#ad6f2f",
+                              fontSize: 10,
+                              position: "insideTop"
+                            }}
+                          />
+                          <ReferenceDot
+                            x={`future-${trend.projectedCrossStep}`}
+                            y={trend.ceilingValue}
+                            r={6}
+                            fill="#ad6f2f"
+                            stroke="#ffffff"
+                            strokeWidth={2}
+                          />
+                        </>
+                      ) : null}
 
                       <Line
                         type="monotone"
                         dataKey="actual"
                         name="actual"
-                        stroke="#0ea5e9"
+                        stroke="#4f5f72"
                         strokeWidth={2.5}
                         dot={false}
                         connectNulls
@@ -484,7 +790,7 @@ export function CapacityPage() {
                         type="linear"
                         dataKey="projected"
                         name="projected"
-                        stroke="#f59e0b"
+                        stroke="#7f8ea0"
                         strokeWidth={2}
                         strokeDasharray="6 4"
                         dot={false}
@@ -494,7 +800,7 @@ export function CapacityPage() {
                         x={trend.currentPoint.x}
                         y={trend.currentValue}
                         r={5}
-                        fill="#0ea5e9"
+                        fill="#4f5f72"
                         stroke="#ffffff"
                         strokeWidth={1.5}
                         label={{ value: "Now", position: "top", fill: "var(--color-foreground)", fontSize: 11 }}
@@ -504,7 +810,7 @@ export function CapacityPage() {
                 </div>
 
                 <p className="text-xs text-muted">
-                  Green area indicates lower pressure. Red area indicates high pressure where you are likely to hit capacity sooner.
+                  The solid line shows actual utilization. The dashed line shows linear projection. The shaded band marks the runway between now and projected saturation.
                 </p>
               </>
             ) : (
@@ -515,6 +821,60 @@ export function CapacityPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Capacity Risk Summary</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-3 text-sm md:grid-cols-3">
+          {/* Tint non-zero alert tiles amber/red so they visually advance over zero/stable tiles */}
+          <div
+            className="rounded-lg border p-3"
+            style={{
+              background: disksAbove85 > 0 ? "rgba(173,111,47,0.08)" : "var(--color-surface-2)",
+              borderColor: disksAbove85 > 0 ? "#ad6f2f" : "var(--color-border)"
+            }}
+          >
+            <p className="text-xs text-muted">Volumes at/above 85%</p>
+            <p
+              className="mt-1 text-xl font-semibold"
+              style={{ color: disksAbove85 > 0 ? "#ad6f2f" : "var(--color-foreground)" }}
+            >
+              {disksAbove85}
+            </p>
+          </div>
+          <div
+            className="rounded-lg border p-3"
+            style={{
+              background: disksAbove95 > 0 ? "rgba(143,45,45,0.08)" : "var(--color-surface-2)",
+              borderColor: disksAbove95 > 0 ? "#8f2d2d" : "var(--color-border)"
+            }}
+          >
+            <p className="text-xs text-muted">Volumes at/above 95%</p>
+            <p
+              className="mt-1 text-xl font-semibold"
+              style={{ color: disksAbove95 > 0 ? "#8f2d2d" : "var(--color-foreground)" }}
+            >
+              {disksAbove95}
+            </p>
+          </div>
+          <div
+            className="rounded-lg border p-3"
+            style={{
+              background: projectedWithin60 ? "rgba(143,45,45,0.08)" : "var(--color-surface-2)",
+              borderColor: projectedWithin60 ? "#8f2d2d" : "var(--color-border)"
+            }}
+          >
+            <p className="text-xs text-muted">Projection signal</p>
+            <p
+              className="mt-1 font-semibold"
+              style={{ color: projectedWithin60 ? "#8f2d2d" : "var(--color-foreground)" }}
+            >
+              {projectedWithin60 ? "Exhaustion projected within 60 days" : trend ? trend.trajectoryNote : "Awaiting trend data"}
+            </p>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

@@ -15,7 +15,29 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   if (!response.ok) {
-    throw new Error(await response.text());
+    const raw = await response.text();
+    let message = raw;
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as { message?: unknown; error?: unknown; details?: unknown };
+        const fromPayload = [parsed.message, parsed.error, parsed.details]
+          .find((value) => typeof value === "string" && value.trim()) as string | undefined;
+        if (fromPayload) {
+          message = fromPayload;
+        }
+      } catch {
+        // Keep raw text if not JSON.
+      }
+    }
+
+    if (!message || !message.trim()) {
+      message = `Request failed (${response.status} ${response.statusText})`;
+    }
+    throw new Error(message);
+  }
+
+  if (response.status === 204) {
+    return undefined as T;
   }
 
   const json = (await response.json()) as { data: T };

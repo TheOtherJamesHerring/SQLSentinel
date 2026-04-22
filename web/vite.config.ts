@@ -12,8 +12,15 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: "autoUpdate",
-      includeAssets: ["icon.svg", "icon-192.png", "icon-512.png"],
+      includeAssets: [
+        "icon.svg",
+        "icon-192.png",
+        "icon-512.png",
+        "icon-192-maskable.png",
+        "icon-512-maskable.png"
+      ],
       manifest: {
+        id: "/",
         name: "SQLSentinnel - SQL Server Monitoring",
         short_name: "SQLSentinnel",
         description: "Professional SQL Server monitoring and capacity planning dashboard",
