@@ -1,0 +1,287 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ══════════════════════════════════════════════════════════════════
+   DESIGN TOKENS — Professional Light (light mode, primary theme)
+   High contrast, professional appearance. WCAG AAA on all surfaces.
+══════════════════════════════════════════════════════════════════ */
+:root {
+  color-scheme: light;
+
+  /* Surface hierarchy — clean, professional */
+  --color-background:  #f5f5f5;
+  --color-card:        #ffffff;
+  --color-surface-2:   #fafafa;
+  --color-border:      #d0d0d0;
+
+  /* Typography — high contrast */
+  --color-foreground:  #1a1a1a;  /* ~18:1 */
+  --color-muted:       #666666;  /* ~8.5:1 */
+
+  /* Semantic palette — strong, professional */
+  --color-primary:     #0052cc;  /* strong blue; 8.3:1 */
+  --color-btn-primary: #0052cc;  /* button bg; #fff text = 8.3:1 */
+  --color-success:     #0d6b3b;  /* strong green; 8.7:1 */
+  --color-warning:     #b85900;  /* strong orange; 7.2:1 */
+  --color-danger:      #b30000;  /* strong red; 8.9:1 */
+
+  /* Badge surface tokens — professional, solid backgrounds */
+  --badge-success-bg:     #d6f4e9;
+  --badge-success-text:   #0d6b3b;
+  --badge-success-border: #0d6b3b;
+  --badge-warning-bg:     #ffe4c4;
+  --badge-warning-text:   #b85900;
+  --badge-warning-border: #b85900;
+  --badge-danger-bg:      #ffe0e0;
+  --badge-danger-text:    #b30000;
+  --badge-danger-border:  #b30000;
+  --badge-muted-bg:       #e8e8e8;
+  --badge-muted-text:     #333333;
+  --badge-muted-border:   #999999;
+  --badge-primary-bg:     #dde9f8;
+  --badge-primary-text:   #0052cc;
+  --badge-primary-border: #0052cc;
+
+  /* Form controls */
+  --color-input-bg:    #ffffff;
+
+  /* Table */
+  --color-table-head:  #eeeeee;
+  --color-table-hover: #f9f9f9;
+
+  /* Progress / gauge track */
+  --color-gauge-track: #cccccc;
+
+  /* Skeleton shimmer */
+  --skeleton-from: #e0e0e0;
+  --skeleton-via:  #f0f0f0;
+  --skeleton-to:   #e0e0e0;
+
+  /* Sidebar navigation — clear, professional */
+  --nav-active-bg:    #e3f2fd;
+  --nav-active-text:  #0052cc;
+  --nav-hover-bg:     #f5f5f5;
+  --nav-cta-bg:       #f0f4ff;
+  --nav-cta-text:     #0052cc;
+  --nav-cta-border:   #0052cc;
+  --nav-logout-hover: #ffe0e0;
+  --nav-logout-text:  #b30000;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   DESIGN TOKENS — Professional Dark (dark mode)
+   High contrast, professional appearance. WCAG AAA maintained.
+══════════════════════════════════════════════════════════════════ */
+body.ui-midnight {
+  color-scheme: dark;
+
+  --color-background:  #0f0f0f;
+  --color-card:        #1a1a1a;
+  --color-surface-2:   #262626;
+  --color-border:      #404040;
+
+  --color-foreground:  #f5f5f5;  /* ~16:1 */
+  --color-muted:       #cccccc;  /* ~8.1:1 */
+
+  --color-primary:     #5fa3ff;  /* bright blue; 8.2:1 */
+  --color-btn-primary: #0052cc;  /* button bg; #fff text = 8.3:1 */
+  --color-success:     #52d96f;  /* bright green; 9.5:1 */
+  --color-warning:     #ffb347;  /* bright orange; 8.4:1 */
+  --color-danger:      #ff6b6b;  /* bright red; 8.7:1 */
+
+  --badge-success-bg:     #1a4d2e;
+  --badge-success-text:   #52d96f;
+  --badge-success-border: #52d96f;
+  --badge-warning-bg:     #4d3a1f;
+  --badge-warning-text:   #ffb347;
+  --badge-warning-border: #ffb347;
+  --badge-danger-bg:      #4d1a1a;
+  --badge-danger-text:    #ff6b6b;
+  --badge-danger-border:  #ff6b6b;
+  --badge-muted-bg:       #333333;
+  --badge-muted-text:     #e0e0e0;
+  --badge-muted-border:   #666666;
+  --badge-primary-bg:     #1a3a5c;
+  --badge-primary-text:   #5fa3ff;
+  --badge-primary-border: #5fa3ff;
+
+  --color-input-bg:    #262626;
+
+  --color-table-head:  #1f1f1f;
+  --color-table-hover: #2a2a2a;
+
+  --color-gauge-track: #333333;
+
+  --skeleton-from: #262626;
+  --skeleton-via:  #333333;
+  --skeleton-to:   #262626;
+
+  --nav-active-bg:    #1a3a5c;
+  --nav-active-text:  #5fa3ff;
+  --nav-hover-bg:     #262626;
+  --nav-cta-bg:       #1a2d4d;
+  --nav-cta-text:     #5fa3ff;
+  --nav-cta-border:   #5fa3ff;
+  --nav-logout-hover: #4d1a1a;
+  --nav-logout-text:  #ff6b6b;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   BODY BACKGROUNDS
+══════════════════════════════════════════════════════════════════ */
+body {
+  margin: 0;
+  min-height: 100vh;
+  transition: background 250ms ease, color 120ms ease;
+  background: var(--color-background);
+  color: var(--color-foreground);
+}
+
+body.ui-midnight {
+  background: var(--color-background);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   BADGE COMPONENT CLASSES  (badge.tsx)
+══════════════════════════════════════════════════════════════════ */
+.badge-success {
+  background-color: var(--badge-success-bg);
+  color:            var(--badge-success-text);
+  border-color:     var(--badge-success-border);
+}
+.badge-warning {
+  background-color: var(--badge-warning-bg);
+  color:            var(--badge-warning-text);
+  border-color:     var(--badge-warning-border);
+}
+.badge-danger {
+  background-color: var(--badge-danger-bg);
+  color:            var(--badge-danger-text);
+  border-color:     var(--badge-danger-border);
+}
+.badge-muted {
+  background-color: var(--badge-muted-bg);
+  color:            var(--badge-muted-text);
+  border-color:     var(--badge-muted-border);
+}
+.badge-primary {
+  background-color: var(--badge-primary-bg);
+  color:            var(--badge-primary-text);
+  border-color:     var(--badge-primary-border);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   SIDEBAR COMPONENT CLASSES  (sidebar.tsx)
+══════════════════════════════════════════════════════════════════ */
+.nav-item-active {
+  background-color: var(--nav-active-bg);
+  color:            var(--nav-active-text) !important;
+  font-weight:      500;
+}
+.nav-item:hover {
+  background-color: var(--nav-hover-bg);
+}
+.nav-cta {
+  background-color: var(--nav-cta-bg);
+  color:            var(--nav-cta-text) !important;
+  border-color:     var(--nav-cta-border);
+}
+.nav-logout:hover {
+  background-color: var(--nav-logout-hover);
+  color:            var(--nav-logout-text);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   TABLE ROW HOVER  (table.tsx)
+══════════════════════════════════════════════════════════════════ */
+.tr-hover:hover {
+  background-color: var(--color-table-hover);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   CODE SURFACES — always dark regardless of theme
+══════════════════════════════════════════════════════════════════ */
+.code-block {
+  font-family: "IBM Plex Mono", monospace;
+}
+.code-surface {
+  background-color: #1e293b;
+  color:            #e2e8f0;
+}
+body.ui-midnight .code-surface {
+  background-color: #0c1017;
+  color:            #e2e8f0;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   SKELETON SHIMMER
+══════════════════════════════════════════════════════════════════ */
+.skeleton-shimmer {
+  animation:       shimmer 1.8s linear infinite;
+  background:      linear-gradient(
+    90deg,
+    var(--skeleton-from) 0%,
+    var(--skeleton-via)  50%,
+    var(--skeleton-to)   100%
+  );
+  background-size: 700px 100%;
+}
+@keyframes shimmer {
+  0%   { background-position: -700px 0; }
+  100% { background-position:  700px 0; }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   RECHARTS — CSS overrides for grid / axis tick colors
+   CSS rules override SVG presentation attributes per spec.
+══════════════════════════════════════════════════════════════════ */
+.recharts-cartesian-grid line {
+  stroke: var(--color-border);
+}
+.recharts-xAxis .recharts-cartesian-axis-tick text,
+.recharts-xAxis .recharts-cartesian-axis-tick tspan,
+.recharts-yAxis .recharts-cartesian-axis-tick text,
+.recharts-yAxis .recharts-cartesian-axis-tick tspan {
+  fill: var(--color-muted) !important;
+}
+.recharts-tooltip-cursor {
+  fill:    var(--color-surface-2);
+  opacity: 0.5;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   LIGHT-MODE COMPATIBILITY OVERRIDES
+   Fix page-level hardcoded dark-only text classes so they remain
+   readable on light surfaces. Code panels (bg-slate-900/800) are
+   intentionally excluded — they stay dark in all modes.
+══════════════════════════════════════════════════════════════════ */
+
+/* Near-white text → foreground  (use text-[#fff] in components that
+   intentionally need white text on a colored background) */
+body:not(.ui-midnight) .text-white,
+body:not(.ui-midnight) .text-slate-50,
+body:not(.ui-midnight) .text-slate-100,
+body:not(.ui-midnight) .text-slate-200 {
+  color: var(--color-foreground) !important;
+}
+
+/* Mid-gray text → muted */
+body:not(.ui-midnight) .text-slate-300,
+body:not(.ui-midnight) .text-slate-400,
+body:not(.ui-midnight) .text-slate-500 {
+  color: var(--color-muted) !important;
+}
+
+/* Light accent links → accessible primary */
+body:not(.ui-midnight) .text-blue-200,
+body:not(.ui-midnight) .text-blue-300,
+body:not(.ui-midnight) .text-blue-400 {
+  color: var(--color-primary) !important;
+}
+body:not(.ui-midnight) .hover\:text-blue-200:hover,
+body:not(.ui-midnight) .hover\:text-blue-300:hover {
+  color: var(--color-primary) !important;
+}

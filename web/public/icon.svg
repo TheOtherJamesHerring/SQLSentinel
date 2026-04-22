@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="96" fill="#1d4ed8"/>
+  <rect x="112" y="180" width="288" height="200" rx="18" fill="#1e3a8a" stroke="#3b82f6" stroke-width="8"/>
+  <ellipse cx="256" cy="180" rx="144" ry="42" fill="#2563eb" stroke="#3b82f6" stroke-width="8"/>
+  <ellipse cx="256" cy="240" rx="144" ry="42" fill="none" stroke="#3b82f6" stroke-width="8"/>
+  <ellipse cx="256" cy="300" rx="144" ry="42" fill="none" stroke="#3b82f6" stroke-width="8"/>
+  <ellipse cx="256" cy="380" rx="144" ry="42" fill="#2563eb" stroke="#3b82f6" stroke-width="8"/>
+  <text x="256" y="198" text-anchor="middle" fill="white" font-family="system-ui,sans-serif" font-size="52" font-weight="800" letter-spacing="-1">SQL</text>
+</svg>

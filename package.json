@@ -1,0 +1,10 @@
+{
+  "name": "sqlsentinnel",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": ["api", "collector", "web"],
+  "scripts": {
+    "dev": "npm run dev --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present"
+  }
+}

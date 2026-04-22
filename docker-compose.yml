@@ -1,0 +1,46 @@
+version: "3.9"
+
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: sqlsentinnel-sqlserver
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Your_strong_Password123"
+    ports:
+      - "1433:1433"
+    volumes:
+      - sql_data:/var/opt/mssql
+
+  api:
+    build:
+      context: ./api
+    container_name: sqlsentinnel-api
+    env_file:
+      - ./api/.env.example
+    ports:
+      - "3001:3001"
+    depends_on:
+      - sqlserver
+
+  web:
+    build:
+      context: ./web
+    container_name: sqlsentinnel-web
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+
+  collector:
+    build:
+      context: ./collector
+    container_name: sqlsentinnel-collector
+    env_file:
+      - ./collector/.env.example
+    depends_on:
+      - api
+      - sqlserver
+
+volumes:
+  sql_data:
