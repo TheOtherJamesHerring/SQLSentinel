@@ -35,10 +35,72 @@ export interface AzureDeployResult {
   summary: string;
 }
 
+export interface AzureCliReadiness {
+  available: boolean;
+  executable: string | null;
+  message: string;
+}
+
 interface RunResult {
   code: number;
   stdout: string;
   stderr: string;
+}
+
+let resolvedAzExecutable: string | null = null;
+
+function tryRunAzVersion(executable: string) {
+  return new Promise<boolean>((resolve) => {
+    const child = spawn(executable, ["--version"], {
+      shell: false,
+      windowsHide: true,
+      stdio: ["ignore", "ignore", "ignore"]
+    });
+
+    child.on("error", () => resolve(false));
+    child.on("close", (code) => resolve(code === 0));
+  });
+}
+
+async function resolveAzExecutable() {
+  if (resolvedAzExecutable) return resolvedAzExecutable;
+
+  const configured = process.env.AZURE_CLI_PATH?.trim();
+  const candidates = configured
+    ? [configured]
+    : process.platform === "win32"
+      ? ["az.cmd", "az.exe", "az"]
+      : ["az"];
+
+  for (const candidate of candidates) {
+    // Probe CLI presence once and cache the first working command.
+    if (await tryRunAzVersion(candidate)) {
+      resolvedAzExecutable = candidate;
+      return candidate;
+    }
+  }
+
+  throw new Error(
+    "Azure one-click setup is not available on this server because Azure CLI is not installed or not reachable by the API process. Install Azure CLI on the API host and restart the service."
+  );
+}
+
+export async function getAzureCliReadiness(): Promise<AzureCliReadiness> {
+  try {
+    const executable = await resolveAzExecutable();
+    return {
+      available: true,
+      executable,
+      message: `Automatic Azure setup is available (${executable}).`
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Azure CLI is not available for this API process.";
+    return {
+      available: false,
+      executable: null,
+      message
+    };
+  }
 }
 
 function sanitizeToken(value: string) {
@@ -58,9 +120,10 @@ function maskSecrets(text: string, secrets: string[]) {
   return result;
 }
 
-function runAz(args: string[], sensitiveValues: string[]) {
+async function runAz(args: string[], sensitiveValues: string[]) {
+  const azExecutable = await resolveAzExecutable();
   return new Promise<RunResult>((resolve, reject) => {
-    const child = spawn("az", args, {
+    const child = spawn(azExecutable, args, {
       shell: false,
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"]
@@ -78,6 +141,10 @@ function runAz(args: string[], sensitiveValues: string[]) {
     });
 
     child.on("error", (error) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        reject(new Error("Azure one-click setup is not available on this server because Azure CLI is not installed. Ask your administrator to install Azure CLI on the SQLSentinnel API host, or use a guided setup mode instead."));
+        return;
+      }
       reject(new Error(`Azure CLI execution failed: ${error.message}`));
     });
 

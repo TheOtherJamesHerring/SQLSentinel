@@ -48,9 +48,15 @@ interface CollectorHealth {
   seenAfterDeploy: boolean;
 }
 
+interface AzureReadiness {
+  available: boolean;
+  executable: string | null;
+  message: string;
+}
+
 // ─── Step indicator ───────────────────────────────────────────────────────────
 
-const STEPS = ["Welcome", "Connection", "Credentials", "Register", "Collector"];
+const STEPS = ["Start", "Server", "Sign-in", "Save", "Finish"];
 
 function StepBar({ current }: { current: number }) {
   return (
@@ -82,17 +88,17 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
         <Database className="h-10 w-10 text-[#fff]" />
       </div>
       <div>
-        <h2 className="text-2xl font-bold text-foreground">Welcome to SQLSentinnel</h2>
+        <h2 className="text-2xl font-bold text-foreground">Set up your first SQL server</h2>
         <p className="mt-2 max-w-md text-muted">
-          Your always-on remote DBA dashboard for SQL Server. Let's connect your first server in under 2 minutes.
+          We will guide you step-by-step. Most users can finish this in about 2 minutes.
         </p>
       </div>
       <div className="w-full max-w-sm space-y-3 rounded-xl border border-border bg-card p-4 text-left text-sm text-foreground">
         {[
-          ["1", "Tell us where your SQL Server is"],
-          ["2", "Enter service account credentials"],
-          ["3", "We'll test the connection live"],
-          ["4", "Get a ready-made collector config"],
+          ["1", "Tell us which SQL service you use"],
+          ["2", "Enter login details"],
+          ["3", "We test the connection for you"],
+          ["4", "Choose easy data collection setup"],
         ].map(([num, text]) => (
           <div key={num} className="flex items-center gap-3">
             <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-bold text-primary">{num}</span>
@@ -111,6 +117,7 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
 }
 
 interface ConnDetails {
+  targetType: "on-prem" | "sql-mi" | "azure-sql-db" | "fabric-sql";
   serverName: string; hostname: string; instanceName: string;
   port: string; database: string; environment: string;
 }
@@ -119,6 +126,25 @@ function ConnectionStep({ data, onChange, onNext, onBack }: {
   data: ConnDetails; onChange: (d: Partial<ConnDetails>) => void;
   onNext: () => void; onBack: () => void;
 }) {
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const isDatabaseScopedTarget = data.targetType === "azure-sql-db" || data.targetType === "fabric-sql";
+  const hostnamePlaceholder =
+    data.targetType === "azure-sql-db"
+      ? "yourserver.database.windows.net"
+      : data.targetType === "fabric-sql"
+        ? "workspace.datawarehouse.fabric.microsoft.com"
+        : data.targetType === "sql-mi"
+          ? "your-mi.public.<region>.database.windows.net"
+          : "myserver.domain.com";
+  const hostnameHint =
+    data.targetType === "azure-sql-db"
+      ? "Use the server name that ends with .database.windows.net"
+      : data.targetType === "fabric-sql"
+        ? "Use the name that ends with .datawarehouse.fabric.microsoft.com"
+        : data.targetType === "sql-mi"
+          ? "Use your Managed Instance host name"
+          : "Use the host name or IP of your SQL Server";
+
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
     onNext();
@@ -126,9 +152,18 @@ function ConnectionStep({ data, onChange, onNext, onBack }: {
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
       <div>
-        <h2 className="text-xl font-bold text-foreground">Server Details</h2>
-        <p className="mt-1 text-sm text-muted">Where is your SQL Server instance?</p>
+        <h2 className="text-xl font-bold text-foreground">Server details</h2>
+        <p className="mt-1 text-sm text-muted">Tell us what you are connecting to.</p>
       </div>
+      <Field label="SQL Service Type" required>
+        <select value={data.targetType} onChange={(e) => onChange({ targetType: e.target.value as ConnDetails["targetType"] })}
+          className={inputCls}>
+          <option value="on-prem">SQL Server (on-prem or VM)</option>
+          <option value="sql-mi">Azure SQL Managed Instance</option>
+          <option value="azure-sql-db">Azure SQL Database</option>
+          <option value="fabric-sql">Microsoft Fabric SQL</option>
+        </select>
+      </Field>
       <Field label="Display Name" required>
         <input required value={data.serverName} onChange={(e) => onChange({ serverName: e.target.value })}
           placeholder="MTCG-SQL-DEV" className={inputCls} />
@@ -136,32 +171,48 @@ function ConnectionStep({ data, onChange, onNext, onBack }: {
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Hostname / IP" required>
           <input required value={data.hostname} onChange={(e) => onChange({ hostname: e.target.value })}
-            placeholder="myserver.domain.com" className={inputCls} />
+            placeholder={hostnamePlaceholder} className={inputCls} />
+          <p className="mt-1 text-xs text-muted">{hostnameHint}</p>
         </Field>
-        <Field label="Port">
-          <input type="number" value={data.port} onChange={(e) => onChange({ port: e.target.value })}
-            placeholder="1433" className={inputCls} />
-        </Field>
+        {!isDatabaseScopedTarget ? (
+          <Field label="Instance Name (optional)">
+            <input value={data.instanceName} onChange={(e) => onChange({ instanceName: e.target.value })}
+              placeholder="MSSQLSERVER" className={inputCls} />
+          </Field>
+        ) : (
+          <div className="rounded-lg border border-border bg-background px-3 py-2 text-xs text-muted">
+            Instance name is not needed for this SQL service type.
+          </div>
+        )}
       </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Instance Name (optional)">
-          <input value={data.instanceName} onChange={(e) => onChange({ instanceName: e.target.value })}
-            placeholder="MSSQLSERVER" className={inputCls} />
-        </Field>
-        <Field label="Initial Database">
-          <input value={data.database} onChange={(e) => onChange({ database: e.target.value })}
-            placeholder="master" className={inputCls} />
-        </Field>
-      </div>
-      <Field label="Environment">
-        <select value={data.environment} onChange={(e) => onChange({ environment: e.target.value })}
-          className={inputCls}>
-          <option value="production">Production</option>
-          <option value="staging">Staging</option>
-          <option value="development">Development</option>
-          <option value="dr">DR / Failover</option>
-        </select>
-      </Field>
+      <button
+        type="button"
+        onClick={() => setShowAdvanced((v) => !v)}
+        className="text-xs font-medium text-primary underline underline-offset-2"
+      >
+        {showAdvanced ? "Hide advanced settings" : "Show advanced settings"}
+      </button>
+      {showAdvanced && (
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Port">
+            <input type="number" value={data.port} onChange={(e) => onChange({ port: e.target.value })}
+              placeholder="1433" className={inputCls} />
+          </Field>
+          <Field label="Initial Database">
+            <input value={data.database} onChange={(e) => onChange({ database: e.target.value })}
+              placeholder="master" className={inputCls} />
+          </Field>
+          <Field label="Environment">
+            <select value={data.environment} onChange={(e) => onChange({ environment: e.target.value })}
+              className={inputCls}>
+              <option value="production">Production</option>
+              <option value="staging">Staging</option>
+              <option value="development">Development</option>
+              <option value="dr">DR / Failover</option>
+            </select>
+          </Field>
+        </div>
+      )}
       <StepNav onBack={onBack} nextLabel="Next: Credentials" />
     </form>
   );
@@ -176,8 +227,25 @@ function CredentialsStep({ conn, auth, onChange, onNext, onBack }: {
   conn: ConnDetails; auth: AuthDetails; onChange: (d: Partial<AuthDetails>) => void;
   onNext: (result: TestResult) => void; onBack: () => void;
 }) {
+  const [showAdvancedAuth, setShowAdvancedAuth] = useState(false);
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState("");
+
+  const isDatabaseScopedTarget = conn.targetType === "azure-sql-db" || conn.targetType === "fabric-sql";
+  const normalizedInstanceName = isDatabaseScopedTarget ? undefined : conn.instanceName || undefined;
+
+  useEffect(() => {
+    if (conn.targetType === "on-prem" || conn.targetType === "sql-mi") {
+      if (auth.authType !== "SQL Auth" && auth.authType !== "Windows Auth") {
+        onChange({ authType: "SQL Auth" });
+      }
+    }
+    if (conn.targetType === "azure-sql-db" || conn.targetType === "fabric-sql") {
+      if (auth.authType === "Windows Auth") {
+        onChange({ authType: "SQL Auth" });
+      }
+    }
+  }, [auth.authType, conn.targetType, onChange]);
 
   async function handleTest(e: FormEvent) {
     e.preventDefault();
@@ -187,9 +255,11 @@ function CredentialsStep({ conn, auth, onChange, onNext, onBack }: {
       const result = await api<TestResult>("/connections/test-inline", {
         method: "POST",
         body: JSON.stringify({
+          targetType: conn.targetType,
+          authType: auth.authType,
           hostname: conn.hostname,
           port: Number(conn.port) || 1433,
-          instanceName: conn.instanceName || undefined,
+          instanceName: normalizedInstanceName,
           username: auth.username,
           password: auth.password,
           database: conn.database || "master",
@@ -208,18 +278,14 @@ function CredentialsStep({ conn, auth, onChange, onNext, onBack }: {
   return (
     <form onSubmit={handleTest} className="space-y-5">
       <div>
-        <h2 className="text-xl font-bold text-foreground">Authentication</h2>
+        <h2 className="text-xl font-bold text-foreground">Sign-in details</h2>
         <p className="mt-1 text-sm text-muted">
-          Service account credentials for <span className="text-primary font-medium">{conn.hostname}</span>
+          Enter the account used to connect to <span className="text-primary font-medium">{conn.hostname}</span>
         </p>
       </div>
-      <Field label="Auth Type">
-        <select value={auth.authType} onChange={(e) => onChange({ authType: e.target.value })}
-          className={inputCls}>
-          <option value="SQL Auth">SQL Server Authentication</option>
-          <option value="Windows Auth">Windows Authentication</option>
-        </select>
-      </Field>
+      <div className="rounded-lg border border-border bg-background px-3 py-2 text-xs text-muted">
+        Recommended: use SQL Server login unless your team tells you to use another sign-in method.
+      </div>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Username" required>
           <input required value={auth.username} onChange={(e) => onChange({ username: e.target.value })}
@@ -230,23 +296,45 @@ function CredentialsStep({ conn, auth, onChange, onNext, onBack }: {
             placeholder="••••••••" className={inputCls} autoComplete="new-password" />
         </Field>
       </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Encrypt Connection">
-          <select value={auth.encrypt} onChange={(e) => onChange({ encrypt: e.target.value })} className={inputCls}>
-            <option value="true">Yes (recommended)</option>
-            <option value="false">No</option>
-          </select>
-        </Field>
-        <Field label="Trust Server Certificate">
-          <select value={auth.trustServerCert} onChange={(e) => onChange({ trustServerCert: e.target.value })} className={inputCls}>
-            <option value="true">Yes (for self-signed)</option>
-            <option value="false">No</option>
-          </select>
-        </Field>
-      </div>
+      <button
+        type="button"
+        onClick={() => setShowAdvancedAuth((v) => !v)}
+        className="text-xs font-medium text-primary underline underline-offset-2"
+      >
+        {showAdvancedAuth ? "Hide advanced sign-in settings" : "Show advanced sign-in settings"}
+      </button>
+      {showAdvancedAuth && (
+        <>
+          <Field label="Authentication Type">
+            <select value={auth.authType} onChange={(e) => onChange({ authType: e.target.value })}
+              className={inputCls}>
+              <option value="SQL Auth">SQL Server Authentication</option>
+              {(conn.targetType === "on-prem" || conn.targetType === "sql-mi") && (
+                <option value="Windows Auth">Windows Authentication</option>
+              )}
+              {(conn.targetType === "azure-sql-db" || conn.targetType === "fabric-sql") && (
+                <option value="Entra ID Password">Microsoft Entra Password</option>
+              )}
+            </select>
+          </Field>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Encrypt Connection">
+              <select value={auth.encrypt} onChange={(e) => onChange({ encrypt: e.target.value })} className={inputCls}>
+                <option value="true">Yes (recommended)</option>
+                <option value="false">No</option>
+              </select>
+            </Field>
+            <Field label="Trust Server Certificate">
+              <select value={auth.trustServerCert} onChange={(e) => onChange({ trustServerCert: e.target.value })} className={inputCls}>
+                <option value="true">Yes (for self-signed)</option>
+                <option value="false">No</option>
+              </select>
+            </Field>
+          </div>
+        </>
+      )}
       <div className="rounded-lg border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-warning">
-        💡 The service account needs <strong>VIEW SERVER STATE</strong> and <strong>VIEW DATABASE STATE</strong> permissions.
-        Run <code className="opacity-80">scripts/create_sqlmonitor_svc.sql</code> on the target server to create it.
+        Tip: if this account cannot connect, ask your DBA to grant monitoring permissions for SQLSentinnel.
       </div>
       {error && (
         <div className="flex items-start gap-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2.5 text-sm text-danger">
@@ -287,9 +375,10 @@ function RegisterStep({ conn, auth, testResult, onNext, onBack }: {
         body: JSON.stringify({
           name: conn.serverName,
           hostname: conn.hostname,
-          instanceName: conn.instanceName || undefined,
+          instanceName: (conn.targetType === "azure-sql-db" || conn.targetType === "fabric-sql") ? undefined : conn.instanceName || undefined,
           port: Number(conn.port) || 1433,
-          environment: conn.environment
+          environment: conn.environment,
+          targetType: conn.targetType
         })
       });
       const profile = await api<ProfileRecord>("/connections", {
@@ -299,7 +388,7 @@ function RegisterStep({ conn, auth, testResult, onNext, onBack }: {
           serverId: server.ServerId,
           hostname: conn.hostname,
           port: Number(conn.port) || 1433,
-          instanceName: conn.instanceName || null,
+          instanceName: (conn.targetType === "azure-sql-db" || conn.targetType === "fabric-sql") ? null : conn.instanceName || null,
           authType: auth.authType,
           username: auth.username,
           password: auth.password,
@@ -331,7 +420,7 @@ function RegisterStep({ conn, auth, testResult, onNext, onBack }: {
     <div className="space-y-5">
       <div>
         <h2 className="text-xl font-bold text-foreground">Registering Server</h2>
-        <p className="mt-1 text-sm text-muted">Saving your server and connection profile.</p>
+        <p className="mt-1 text-sm text-muted">Saving your server so it appears on your dashboard.</p>
       </div>
 
       {/* Test result */}
@@ -375,7 +464,6 @@ function CollectorStep({ conn, auth, server }: {
     : "single-host";
   const [mode, setMode] = useState<"single-host" | "container" | "azure-container-instance" | "azure-app-service">(defaultMode);
   const [serverCount, setServerCount] = useState("1");
-  const [showCredentialsPrompt, setShowCredentialsPrompt] = useState(false);
   const [deploying, setDeploying] = useState(false);
   const [deployError, setDeployError] = useState("");
   const [deployResult, setDeployResult] = useState<DeployResult | null>(null);
@@ -383,6 +471,8 @@ function CollectorStep({ conn, auth, server }: {
   const [health, setHealth] = useState<CollectorHealth | null>(null);
   const [healthMessage, setHealthMessage] = useState("");
   const [checkingHealth, setCheckingHealth] = useState(false);
+  const [checkingAzureReadiness, setCheckingAzureReadiness] = useState(false);
+  const [azureReadiness, setAzureReadiness] = useState<AzureReadiness | null>(null);
   const [copied, setCopied] = useState(false);
   const [credentials, setCredentials] = useState({
     hostUsername: "",
@@ -400,32 +490,36 @@ function CollectorStep({ conn, auth, server }: {
   const deploymentModes = [
     {
       id: "single-host",
-      title: "Single Collector (On-Site)",
-      fit: "Best for 1-5 servers in one network",
-      details: "Fastest setup with one process on a nearby host."
+      title: "Manual setup on one machine",
+      fit: "Good for small environments (about 1-5 servers)",
+      details: "We generate commands. Your operator runs them on one host."
     },
     {
       id: "container",
-      title: "Container Collector",
-      fit: "Best for 3-10 servers",
-      details: "Docker-based deployment with easier restart and upgrades."
+      title: "Manual Docker setup",
+      fit: "Good for medium environments (about 3-10 servers)",
+      details: "We generate Docker commands. Your operator runs them."
     },
     {
       id: "azure-container-instance",
-      title: "Azure Container Instance",
-      fit: "Best for cloud SQL and 5-15 servers",
-      details: "Managed Azure container runtime with low ops overhead."
+      title: "Recommended automatic Azure setup",
+      fit: "Best for most Azure SQL environments",
+      details: "One-click setup. SQLSentinnel creates and starts the collector in Azure."
     },
     {
       id: "azure-app-service",
-      title: "Azure App Service",
-      fit: "Best for managed platform controls",
-      details: "PaaS deployment with app settings and lifecycle tooling."
+      title: "Advanced Azure App Service setup",
+      fit: "For teams that standardize on App Service",
+      details: "One-click setup using App Service settings and plan controls."
     }
   ] as const;
 
   const requiresAzureCredentials = mode === "azure-container-instance" || mode === "azure-app-service";
+  const isGuidedMode = mode === "single-host" || mode === "container";
   const isAdmin = user?.role === "admin";
+  const recommendedModeId = defaultMode;
+  const recommendedMode = deploymentModes.find((option) => option.id === recommendedModeId) ?? deploymentModes[0];
+  const alternateModes = deploymentModes.filter((option) => option.id !== recommendedModeId);
 
   async function loadDeployHistory() {
     try {
@@ -469,6 +563,37 @@ function CollectorStep({ conn, auth, server }: {
   }, [server.ServerId]);
 
   useEffect(() => {
+    if (!requiresAzureCredentials || !isAdmin) {
+      setAzureReadiness(null);
+      return;
+    }
+
+    let active = true;
+    setCheckingAzureReadiness(true);
+    api<AzureReadiness>("/servers/collector/azure-readiness")
+      .then((result) => {
+        if (!active) return;
+        setAzureReadiness(result);
+      })
+      .catch((error) => {
+        if (!active) return;
+        setAzureReadiness({
+          available: false,
+          executable: null,
+          message: error instanceof Error ? error.message : "Automatic Azure setup is not available right now."
+        });
+      })
+      .finally(() => {
+        if (!active) return;
+        setCheckingAzureReadiness(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [isAdmin, requiresAzureCredentials]);
+
+  useEffect(() => {
     const deploymentId = deployResult?.deploymentId;
     if (!deploymentId) return;
 
@@ -510,7 +635,6 @@ function CollectorStep({ conn, auth, server }: {
         })
       });
       setDeployResult(result);
-      setShowCredentialsPrompt(false);
       await loadDeployHistory();
     } catch (err) {
       setDeployError(err instanceof Error ? err.message : "Deploy failed");
@@ -529,54 +653,76 @@ function CollectorStep({ conn, auth, server }: {
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="text-xl font-bold text-foreground">Deploy the Collector</h2>
-        <p className="mt-1 text-sm text-muted">Select collector mode, click Deploy, then provide credentials when prompted.</p>
+        <h2 className="text-xl font-bold text-foreground">Turn on monitoring</h2>
+        <p className="mt-1 text-sm text-muted">Choose the easiest setup type for your environment.</p>
       </div>
 
       <div className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-xs text-warning">
-        Monitoring dashboards and alerts require active collector ingestion. If the collector is not deployed, monitoring will not update.
+        Your dashboard starts updating only after collector setup is complete.
       </div>
 
       <div className="rounded-lg border border-border bg-card/60 p-4 space-y-2">
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted">Collector sizing guidance</p>
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted">Simple guidance</p>
         <ul className="space-y-1 text-xs text-muted">
-          <li className="flex items-start gap-2"><ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />Single host is ideal for one site and 1-5 servers.</li>
-          <li className="flex items-start gap-2"><ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />Container mode is ideal for 3-10 servers with better ops controls.</li>
-          <li className="flex items-start gap-2"><ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />For more than 10 servers, use multiple collectors split by region or environment.</li>
-          <li className="flex items-start gap-2"><ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />Azure SQL / Fabric typically works best with Azure container or App Service modes.</li>
+          <li className="flex items-start gap-2"><ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />Automatic setup runs directly from SQLSentinnel (Azure modes).</li>
+          <li className="flex items-start gap-2"><ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />Manual setup gives exact commands for your operator to run.</li>
+          <li className="flex items-start gap-2"><ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />If unsure, keep the recommended mode selected below.</li>
         </ul>
       </div>
 
-      <div className="grid gap-3">
-        {deploymentModes.map((option) => (
+      <div className="space-y-3">
+        <div className="rounded-xl border border-primary/30 bg-primary/5 p-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-primary">Recommended for this server</p>
+          <button
+            type="button"
+            onClick={() => setMode(recommendedMode.id)}
+            className={`mt-2 w-full rounded-lg border p-3 text-left transition ${mode === recommendedMode.id ? "border-primary bg-primary/10" : "border-border bg-card hover:border-primary/40"}`}
+          >
+            <p className="font-semibold text-foreground">
+              {recommendedMode.title}
+              <span className="ml-2 rounded bg-border px-1.5 py-0.5 text-[10px] font-medium text-muted">
+                {recommendedMode.id === "azure-container-instance" || recommendedMode.id === "azure-app-service" ? "Automatic" : "Manual"}
+              </span>
+            </p>
+            <p className="mt-1 text-xs text-primary">{recommendedMode.fit}</p>
+            <p className="mt-1 text-xs text-muted">{recommendedMode.details}</p>
+          </button>
+        </div>
+
+        <div className="rounded-xl border border-border bg-card/50 p-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted">Other setup options</p>
+          <div className="mt-2 grid gap-3">
+            {alternateModes.map((option) => (
           <button
             key={option.id}
             type="button"
             onClick={() => setMode(option.id)}
             className={`rounded-lg border p-3 text-left transition ${mode === option.id ? "border-primary bg-primary/10" : "border-border bg-card/50 hover:border-primary/40"}`}
           >
-            <p className="font-semibold text-foreground">{option.title}</p>
+            <p className="font-semibold text-foreground">
+              {option.title}
+              <span className="ml-2 rounded bg-border px-1.5 py-0.5 text-[10px] font-medium text-muted">
+                {option.id === "azure-container-instance" || option.id === "azure-app-service" ? "Automatic" : "Manual"}
+              </span>
+            </p>
             <p className="mt-1 text-xs text-primary">{option.fit}</p>
             <p className="mt-1 text-xs text-muted">{option.details}</p>
           </button>
-        ))}
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Estimated Server Count" required>
-          <input type="number" min={1} value={serverCount} onChange={(e) => setServerCount(e.target.value)} className={inputCls} />
-        </Field>
-        <div className="flex items-end">
-          <button
-            type="button"
-            onClick={() => { setDeployError(""); setShowCredentialsPrompt(true); }}
-            disabled={!isAdmin}
-            className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow transition hover:opacity-90 disabled:opacity-50"
-          >
-            Deploy Collector
-          </button>
+            ))}
+          </div>
         </div>
       </div>
+
+      <Field label="How many servers will this collector monitor?" required>
+        <input type="number" min={1} value={serverCount} onChange={(e) => setServerCount(e.target.value)} className={inputCls} />
+      </Field>
+
+      {isGuidedMode && (
+        <div className="rounded-lg border border-border bg-card/60 p-3 text-xs text-muted">
+          This is guided setup. Click the button below and we will generate the exact commands for your operator to run.
+          Secret values stay hidden in the preview for security.
+        </div>
+      )}
 
       {!isAdmin && (
         <div className="rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
@@ -584,72 +730,77 @@ function CollectorStep({ conn, auth, server }: {
         </div>
       )}
 
-      {showCredentialsPrompt && (
+      {requiresAzureCredentials && (
         <div className="rounded-lg border border-border bg-card p-4 space-y-3">
-          <p className="text-sm font-semibold text-foreground">Deployment Credentials</p>
+          <p className="text-sm font-semibold text-foreground">Azure setup access</p>
+          <p className="text-xs text-muted">Enter the Azure app registration details used for automatic setup.</p>
 
-          {(mode === "single-host" || mode === "container") && (
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Host username" required>
-                <input value={credentials.hostUsername} onChange={(e) => setCredentials((prev) => ({ ...prev, hostUsername: e.target.value }))} className={inputCls} />
-              </Field>
-              <Field label="Host password" required>
-                <input type="password" value={credentials.hostPassword} onChange={(e) => setCredentials((prev) => ({ ...prev, hostPassword: e.target.value }))} className={inputCls} />
-              </Field>
+          {checkingAzureReadiness && (
+            <div className="rounded-lg border border-border bg-background px-3 py-2 text-xs text-muted">
+              Checking automatic Azure setup availability...
             </div>
           )}
 
-          {requiresAzureCredentials && (
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Subscription ID" required>
-                <input value={credentials.subscriptionId} onChange={(e) => setCredentials((prev) => ({ ...prev, subscriptionId: e.target.value }))} className={inputCls} />
-              </Field>
-              <Field label="Resource Group" required>
-                <input value={credentials.resourceGroup} onChange={(e) => setCredentials((prev) => ({ ...prev, resourceGroup: e.target.value }))} className={inputCls} />
-              </Field>
-              <Field label="Location" required>
-                <input value={credentials.location} onChange={(e) => setCredentials((prev) => ({ ...prev, location: e.target.value }))} className={inputCls} />
-              </Field>
-              <Field label="Tenant ID" required>
-                <input value={credentials.tenantId} onChange={(e) => setCredentials((prev) => ({ ...prev, tenantId: e.target.value }))} className={inputCls} />
-              </Field>
-              <Field label="Client ID" required>
-                <input value={credentials.clientId} onChange={(e) => setCredentials((prev) => ({ ...prev, clientId: e.target.value }))} className={inputCls} />
-              </Field>
-              <Field label="Client Secret" required>
-                <input type="password" value={credentials.clientSecret} onChange={(e) => setCredentials((prev) => ({ ...prev, clientSecret: e.target.value }))} className={inputCls} />
-              </Field>
-              {mode === "azure-app-service" && (
-                <>
-                  <Field label="App Name" required>
-                    <input value={credentials.appName ?? ""} onChange={(e) => setCredentials((prev) => ({ ...prev, appName: e.target.value }))} className={inputCls} />
-                  </Field>
-                  <Field label="App Service Plan" required>
-                    <input value={credentials.appServicePlan ?? ""} onChange={(e) => setCredentials((prev) => ({ ...prev, appServicePlan: e.target.value }))} className={inputCls} />
-                  </Field>
-                </>
-              )}
+          {!checkingAzureReadiness && azureReadiness && (
+            <div className={`rounded-lg border px-3 py-2 text-xs ${azureReadiness.available ? "border-success/40 bg-success/10 text-success" : "border-warning/40 bg-warning/10 text-warning"}`}>
+              {azureReadiness.message}
             </div>
           )}
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Azure Subscription ID" required>
+              <input value={credentials.subscriptionId} onChange={(e) => setCredentials((prev) => ({ ...prev, subscriptionId: e.target.value }))} className={inputCls} />
+            </Field>
+            <Field label="Resource Group" required>
+              <input value={credentials.resourceGroup} onChange={(e) => setCredentials((prev) => ({ ...prev, resourceGroup: e.target.value }))} className={inputCls} />
+            </Field>
+            <Field label="Azure Region" required>
+              <input value={credentials.location} onChange={(e) => setCredentials((prev) => ({ ...prev, location: e.target.value }))} className={inputCls} />
+            </Field>
+            <Field label="Tenant ID" required>
+              <input value={credentials.tenantId} onChange={(e) => setCredentials((prev) => ({ ...prev, tenantId: e.target.value }))} className={inputCls} />
+            </Field>
+            <Field label="Client ID" required>
+              <input value={credentials.clientId} onChange={(e) => setCredentials((prev) => ({ ...prev, clientId: e.target.value }))} className={inputCls} />
+            </Field>
+            <Field label="Client Secret" required>
+              <input type="password" value={credentials.clientSecret} onChange={(e) => setCredentials((prev) => ({ ...prev, clientSecret: e.target.value }))} className={inputCls} />
+            </Field>
+            {mode === "azure-app-service" && (
+              <>
+                <Field label="App Name" required>
+                  <input value={credentials.appName ?? ""} onChange={(e) => setCredentials((prev) => ({ ...prev, appName: e.target.value }))} className={inputCls} />
+                </Field>
+                <Field label="App Service Plan" required>
+                  <input value={credentials.appServicePlan ?? ""} onChange={(e) => setCredentials((prev) => ({ ...prev, appServicePlan: e.target.value }))} className={inputCls} />
+                </Field>
+              </>
+            )}
+          </div>
 
           <div className="flex gap-2">
             <button
               type="button"
               onClick={deployCollector}
-              disabled={deploying}
+              disabled={deploying || checkingAzureReadiness || !azureReadiness?.available}
               className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-60"
             >
-              {deploying ? <><Loader2 className="h-4 w-4 animate-spin" />Deploying...</> : "Validate & Deploy"}
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowCredentialsPrompt(false)}
-              disabled={deploying}
-              className="rounded-lg border border-border px-4 py-2 text-sm text-foreground transition hover:bg-border"
-            >
-              Cancel
+              {deploying ? <><Loader2 className="h-4 w-4 animate-spin" />Setting up...</> : "Start One-Click Setup"}
             </button>
           </div>
+        </div>
+      )}
+
+      {isGuidedMode && isAdmin && (
+        <div className="flex justify-start">
+          <button
+            type="button"
+            onClick={() => { setDeployError(""); void deployCollector(); }}
+            disabled={deploying}
+            className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow transition hover:opacity-90 disabled:opacity-60"
+          >
+            {deploying ? <><Loader2 className="h-4 w-4 animate-spin" />Generating...</> : "Generate Setup Steps"}
+          </button>
         </div>
       )}
 
@@ -661,14 +812,14 @@ function CollectorStep({ conn, auth, server }: {
 
       {deployResult && (
         <div className="space-y-3 rounded-lg border border-success/40 bg-success/10 p-4">
-          <p className="text-sm font-semibold text-success">Collector deployment submitted</p>
+          <p className="text-sm font-semibold text-success">Monitoring setup started</p>
           <p className="text-xs text-foreground/80">{deployResult.summary}</p>
           {deployResult.resourceName && (
             <p className="text-xs text-foreground/80">Resource: <span className="font-mono">{deployResult.resourceName}</span></p>
           )}
           <div className="rounded-lg border border-border bg-card/70 p-3">
             <div className="mb-2 flex items-center justify-between">
-              <p className="text-xs font-medium uppercase tracking-wide text-muted">Deployment command</p>
+              <p className="text-xs font-medium uppercase tracking-wide text-muted">Generated command</p>
               <button
                 type="button"
                 onClick={() => copyCommand(deployResult.command)}
@@ -683,7 +834,7 @@ function CollectorStep({ conn, auth, server }: {
             </pre>
           </div>
           <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-muted">Next steps</p>
+            <p className="text-xs font-medium uppercase tracking-wide text-muted">What to do next</p>
             <ul className="mt-1 space-y-1 text-xs text-foreground/80">
               {deployResult.nextSteps.map((item) => (
                 <li key={item} className="flex items-start gap-2">
@@ -697,14 +848,14 @@ function CollectorStep({ conn, auth, server }: {
           {deployResult.deploymentId && (
             <div className="rounded-lg border border-border bg-card/80 p-3 space-y-2">
               <div className="flex items-center justify-between gap-2">
-                <p className="text-xs font-medium uppercase tracking-wide text-muted">Collector health check</p>
+                <p className="text-xs font-medium uppercase tracking-wide text-muted">Monitoring health check</p>
                 <button
                   type="button"
                   onClick={() => checkCollectorHealth(deployResult.deploymentId!, false)}
                   disabled={checkingHealth}
                   className="rounded-md border border-border px-2.5 py-1 text-xs text-foreground transition hover:bg-border disabled:opacity-60"
                 >
-                  {checkingHealth ? "Checking..." : "Check now"}
+                  {checkingHealth ? "Checking..." : "Check status"}
                 </button>
               </div>
               {health && (
@@ -794,6 +945,7 @@ export function SetupWizardPage() {
   const [step, setStep] = useState(0);
 
   const [conn, setConn] = useState<ConnDetails>({
+    targetType: "on-prem",
     serverName: "", hostname: "", instanceName: "",
     port: "1433", database: "master", environment: "production"
   });

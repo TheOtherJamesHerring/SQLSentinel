@@ -4,7 +4,7 @@ import { query } from "../db/sql.js";
 import { env } from "../config/env.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { listAccessibleServerIds, requireServerAccess } from "../middleware/rbac.js";
-import { executeAzureDeploy } from "../services/azure-deploy.js";
+import { executeAzureDeploy, getAzureCliReadiness } from "../services/azure-deploy.js";
 import {
   finishCollectorDeploymentFailure,
   finishCollectorDeploymentSuccess,
@@ -99,6 +99,15 @@ serversRouter.post("/", requireRole(["admin"]), async (req, res, next) => {
   }
 });
 
+serversRouter.get("/collector/azure-readiness", requireRole(["admin"]), async (_req, res, next) => {
+  try {
+    const readiness = await getAzureCliReadiness();
+    res.json({ data: readiness });
+  } catch (error) {
+    next(error);
+  }
+});
+
 serversRouter.get("/:id", requireServerAccess, async (req, res, next) => {
   try {
     const [server] = await query(`SELECT * FROM Servers WHERE ServerId = @id`, { id: req.params.id });
@@ -178,10 +187,6 @@ serversRouter.post("/:id/collector/deploy", requireRole(["admin"]), async (req, 
     const monitorApiUrl = parsed.data.monitorApiUrl ?? `http://${req.get("host") ?? "localhost:3001"}/api`;
 
     const missingFields: string[] = [];
-    if (mode === "single-host" || mode === "container") {
-      if (!credentials.hostUsername) missingFields.push("hostUsername");
-      if (!credentials.hostPassword) missingFields.push("hostPassword");
-    }
     if (mode === "azure-container-instance" || mode === "azure-app-service") {
       if (!credentials.subscriptionId) missingFields.push("subscriptionId");
       if (!credentials.resourceGroup) missingFields.push("resourceGroup");

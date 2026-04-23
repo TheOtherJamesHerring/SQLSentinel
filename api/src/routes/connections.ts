@@ -152,12 +152,30 @@ connectionsRouter.post("/", requireRole(["admin"]), async (req, res, next) => {
     const body = req.body as Record<string, unknown>;
     const submittedSecret = getSubmittedSecret(body);
     const encryptedSecret = submittedSecret ? encryptConnectionSecret(submittedSecret) : null;
+    const params = {
+      name: body.name ?? null,
+      hostname: body.hostname ?? null,
+      port: body.port ?? null,
+      instanceName: body.instanceName ?? null,
+      authType: body.authType ?? null,
+      username: body.username ?? null,
+      secretEnvKey: body.secretEnvKey ?? null,
+      tenantId: body.tenantId ?? null,
+      clientId: body.clientId ?? null,
+      encryptedSecret,
+      database: body.database ?? null,
+      encrypt: body.encrypt ?? null,
+      trustServerCert: body.trustServerCert ?? null,
+      connectionTimeout: body.connectionTimeout ?? null,
+      environment: body.environment ?? null,
+      notes: body.notes ?? null
+    };
 
     const rows = await query<Record<string, unknown>>(`
       INSERT INTO ConnectionProfiles(Name, Hostname, Port, InstanceName, AuthType, Username, SecretEnvKey, TenantId, ClientId, EncryptedSecret, [Database], Encrypt, TrustServerCert, ConnectionTimeout, Environment, Notes)
       OUTPUT INSERTED.*
       VALUES(@name, @hostname, @port, @instanceName, @authType, @username, @secretEnvKey, @tenantId, @clientId, @encryptedSecret, @database, @encrypt, @trustServerCert, @connectionTimeout, @environment, @notes)
-    `, { ...body, encryptedSecret, secretEnvKey: body.secretEnvKey ?? null });
+    `, params);
     res.status(201).json({ data: sanitizeProfile(rows[0]) });
   } catch (error) {
     next(error);
@@ -169,6 +187,24 @@ connectionsRouter.patch("/:id", requireRole(["admin"]), async (req, res, next) =
     const body = req.body as Record<string, unknown>;
     const submittedSecret = getSubmittedSecret(body);
     const encryptedSecret = submittedSecret ? encryptConnectionSecret(submittedSecret) : null;
+    const params = {
+      id: req.params.id,
+      name: body.name ?? null,
+      hostname: body.hostname ?? null,
+      port: body.port ?? null,
+      authType: body.authType ?? null,
+      username: body.username ?? null,
+      secretEnvKey: body.secretEnvKey ?? null,
+      tenantId: body.tenantId ?? null,
+      clientId: body.clientId ?? null,
+      encryptedSecret,
+      database: body.database ?? null,
+      encrypt: body.encrypt ?? null,
+      trustServerCert: body.trustServerCert ?? null,
+      connectionTimeout: body.connectionTimeout ?? null,
+      environment: body.environment ?? null,
+      notes: body.notes ?? null
+    };
 
     const rows = await query<Record<string, unknown>>(`
       UPDATE ConnectionProfiles
@@ -190,7 +226,7 @@ connectionsRouter.patch("/:id", requireRole(["admin"]), async (req, res, next) =
           UpdatedDate = GETUTCDATE()
       OUTPUT INSERTED.*
       WHERE ProfileId = @id
-    `, { ...body, encryptedSecret, secretEnvKey: body.secretEnvKey ?? null, id: req.params.id });
+    `, params);
     res.json({ data: sanitizeProfile(rows[0]) });
   } catch (error) {
     next(error);
