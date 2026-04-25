@@ -5,18 +5,70 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SQLSentinnel</title>
     <meta name="description" content="Professional SQL Server monitoring and capacity planning dashboard" />
-    <meta name="theme-color" content="#0052cc" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7fafc" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0f172a" />
     <meta name="color-scheme" content="light dark" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="SQLSentinnel" />
+    <style>
+      :root {
+        --splash-bg-a: #f7fafc;
+        --splash-bg-b: #e7eef8;
+        --splash-glow: rgba(74, 144, 217, 0.16);
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --splash-bg-a: #0f172a;
+          --splash-bg-b: #1e293b;
+          --splash-glow: rgba(245, 158, 11, 0.14);
+        }
+      }
+
+      #app-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: grid;
+        place-items: center;
+        background: radial-gradient(circle at 50% 38%, var(--splash-glow) 0%, transparent 43%),
+          linear-gradient(155deg, var(--splash-bg-a), var(--splash-bg-b));
+        opacity: 1;
+        transition: opacity 240ms ease-out, visibility 240ms ease-out;
+      }
+
+      #app-splash.hide {
+        opacity: 0;
+        visibility: hidden;
+      }
+
+      #app-splash .shell {
+        width: min(24vw, 128px);
+        min-width: 88px;
+        aspect-ratio: 1 / 1;
+        display: grid;
+        place-items: center;
+      }
+
+      #app-splash img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        filter: drop-shadow(0 10px 24px rgba(12, 26, 49, 0.2));
+      }
+    </style>
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
-    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
-    <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png" />
-    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <link rel="apple-touch-icon" href="/icon.svg" />
     <link rel="manifest" href="/manifest.webmanifest" />
   </head>
   <body class="bg-background text-foreground">
+    <div id="app-splash" aria-hidden="true">
+      <div class="shell">
+        <img src="/icon.svg" alt="" />
+      </div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

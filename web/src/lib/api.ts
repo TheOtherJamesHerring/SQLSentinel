@@ -4,6 +4,13 @@ function token() {
   return localStorage.getItem("sqls_token") ?? "";
 }
 
+export class SessionExpiredError extends Error {
+  constructor() {
+    super("Session expired. Please log in again.");
+    this.name = "SessionExpiredError";
+  }
+}
+
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
@@ -15,6 +22,13 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   if (!response.ok) {
+    if (response.status === 401) {
+      localStorage.removeItem("sqls_token");
+      localStorage.removeItem("sqls_user");
+      window.location.href = "/login?reason=session_expired";
+      throw new SessionExpiredError();
+    }
+
     const raw = await response.text();
     let message = raw;
     if (raw) {

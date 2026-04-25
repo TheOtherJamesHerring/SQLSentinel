@@ -252,6 +252,12 @@ body.ui-midnight .code-surface {
   opacity: 0.5;
 }
 
+/* Keep responsive chart containers measurable inside grid/flex transitions. */
+.recharts-responsive-container {
+  min-width: 0;
+  min-height: 1px;
+}
+
 /* ══════════════════════════════════════════════════════════════════
    LIGHT-MODE COMPATIBILITY OVERRIDES
    Fix page-level hardcoded dark-only text classes so they remain

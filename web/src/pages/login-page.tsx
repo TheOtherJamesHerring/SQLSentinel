@@ -1,12 +1,14 @@
 import { useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Database, Loader2, AlertCircle } from "lucide-react";
+import { Database, Loader2, AlertCircle, Info } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 
 export function LoginPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const sessionExpired = searchParams.get("reason") === "session_expired";
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -89,6 +91,13 @@ export function LoginPage() {
             <div className="mt-4 flex items-center gap-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
               <AlertCircle className="h-4 w-4 shrink-0" />
               {error}
+            </div>
+          )}
+
+          {sessionExpired && !error && (
+            <div className="mt-4 flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-400">
+              <Info className="h-4 w-4 shrink-0" />
+              Your session expired. Please sign in again.
             </div>
           )}
 

@@ -13,6 +13,13 @@ const queryClient = new QueryClient({
 
 registerSW({ immediate: true });
 
+function dismissSplash() {
+  const splash = document.getElementById("app-splash");
+  if (!splash) return;
+  splash.classList.add("hide");
+  window.setTimeout(() => splash.remove(), 280);
+}
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <AuthProvider>
@@ -24,3 +31,5 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     </AuthProvider>
   </React.StrictMode>
 );
+
+window.requestAnimationFrame(dismissSplash);

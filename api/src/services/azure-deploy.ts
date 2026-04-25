@@ -49,13 +49,48 @@ interface RunResult {
 
 let resolvedAzExecutable: string | null = null;
 
-function tryRunAzVersion(executable: string) {
-  return new Promise<boolean>((resolve) => {
-    const child = spawn(executable, ["--version"], {
+function spawnAzProcess(executable: string, args: string[], stdio: ["ignore", "ignore" | "pipe", "ignore" | "pipe"]) {
+  if (process.platform === "win32") {
+    const comspec = process.env.ComSpec || "cmd.exe";
+    const commandLine = [executable, ...args]
+      .map((part) => (/[\s"^&|<>]/.test(part) ? `"${part.replace(/"/g, '""')}"` : part))
+      .join(" ");
+
+    return spawn(comspec, ["/d", "/s", "/c", commandLine], {
       shell: false,
       windowsHide: true,
-      stdio: ["ignore", "ignore", "ignore"]
+      stdio
     });
+  }
+
+  return spawn(executable, args, {
+    shell: false,
+    windowsHide: true,
+    stdio
+  });
+}
+
+function normalizeExecutableCandidate(value: string) {
+  const trimmed = value.trim();
+  // Allow quoted paths from .env values, e.g. "C:\\Program Files\\...\\az.cmd".
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+function tryRunAzVersion(executable: string) {
+  return new Promise<boolean>((resolve) => {
+    let child;
+    try {
+      child = spawnAzProcess(executable, ["--version"], ["ignore", "ignore", "ignore"]);
+    } catch {
+      resolve(false);
+      return;
+    }
 
     child.on("error", () => resolve(false));
     child.on("close", (code) => resolve(code === 0));
@@ -66,13 +101,15 @@ async function resolveAzExecutable() {
   if (resolvedAzExecutable) return resolvedAzExecutable;
 
   const configured = process.env.AZURE_CLI_PATH?.trim();
+  const platformDefaults = process.platform === "win32"
+    ? ["az.cmd", "az.exe", "az"]
+    : ["az"];
   const candidates = configured
-    ? [configured]
-    : process.platform === "win32"
-      ? ["az.cmd", "az.exe", "az"]
-      : ["az"];
+    ? [normalizeExecutableCandidate(configured), ...platformDefaults]
+    : platformDefaults;
+  const uniqueCandidates = Array.from(new Set(candidates.filter(Boolean)));
 
-  for (const candidate of candidates) {
+  for (const candidate of uniqueCandidates) {
     // Probe CLI presence once and cache the first working command.
     if (await tryRunAzVersion(candidate)) {
       resolvedAzExecutable = candidate;
@@ -123,26 +160,42 @@ function maskSecrets(text: string, secrets: string[]) {
 async function runAz(args: string[], sensitiveValues: string[]) {
   const azExecutable = await resolveAzExecutable();
   return new Promise<RunResult>((resolve, reject) => {
-    const child = spawn(azExecutable, args, {
-      shell: false,
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"]
-    });
+    let child;
+    try {
+      child = spawnAzProcess(azExecutable, args, ["ignore", "pipe", "pipe"]);
+    } catch (error) {
+      const errorCode = (error as NodeJS.ErrnoException).code;
+      if (errorCode === "EINVAL") {
+        reject(new Error("Azure one-click setup is not available because the Azure CLI command is invalid for this host process. Check AZURE_CLI_PATH on the API host (remove surrounding quotes if present) or clear it to use the default 'az' command."));
+        return;
+      }
+      reject(new Error(`Azure CLI execution failed: ${(error as Error).message}`));
+      return;
+    }
 
     let stdout = "";
     let stderr = "";
 
-    child.stdout.on("data", (chunk) => {
-      stdout += String(chunk);
-    });
+    if (child.stdout) {
+      child.stdout.on("data", (chunk) => {
+        stdout += String(chunk);
+      });
+    }
 
-    child.stderr.on("data", (chunk) => {
-      stderr += String(chunk);
-    });
+    if (child.stderr) {
+      child.stderr.on("data", (chunk) => {
+        stderr += String(chunk);
+      });
+    }
 
     child.on("error", (error) => {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      const errorCode = (error as NodeJS.ErrnoException).code;
+      if (errorCode === "ENOENT") {
         reject(new Error("Azure one-click setup is not available on this server because Azure CLI is not installed. Ask your administrator to install Azure CLI on the SQLSentinnel API host, or use a guided setup mode instead."));
+        return;
+      }
+      if (errorCode === "EINVAL") {
+        reject(new Error("Azure one-click setup is not available because the Azure CLI command is invalid for this host process. Check AZURE_CLI_PATH on the API host (remove surrounding quotes if present) or clear it to use the default 'az' command."));
         return;
       }
       reject(new Error(`Azure CLI execution failed: ${error.message}`));

@@ -520,6 +520,7 @@ function CollectorStep({ conn, auth, server }: {
   const recommendedModeId = defaultMode;
   const recommendedMode = deploymentModes.find((option) => option.id === recommendedModeId) ?? deploymentModes[0];
   const alternateModes = deploymentModes.filter((option) => option.id !== recommendedModeId);
+  const noSubscriptionError = /No subscriptions found/i.test(deployError);
 
   async function loadDeployHistory() {
     try {
@@ -610,7 +611,7 @@ function CollectorStep({ conn, auth, server }: {
     return () => window.clearInterval(timer);
   }, [deployResult?.deploymentId]);
 
-  async function deployCollector() {
+  async function deployCollector(requestedMode: "single-host" | "container" | "azure-container-instance" | "azure-app-service" = mode) {
     setDeployError("");
     setDeploying(true);
     try {
@@ -618,7 +619,7 @@ function CollectorStep({ conn, auth, server }: {
       const result = await api<DeployResult>(`/servers/${server.ServerId}/collector/deploy`, {
         method: "POST",
         body: JSON.stringify({
-          mode,
+          mode: requestedMode,
           serverCount: Math.max(1, Number(serverCount) || 1),
           monitorApiUrl,
           sql: {
@@ -634,6 +635,9 @@ function CollectorStep({ conn, auth, server }: {
           credentials
         })
       });
+      if (requestedMode !== mode) {
+        setMode(requestedMode);
+      }
       setDeployResult(result);
       await loadDeployHistory();
     } catch (err) {
@@ -781,13 +785,27 @@ function CollectorStep({ conn, auth, server }: {
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={deployCollector}
+              onClick={() => { void deployCollector(); }}
               disabled={deploying || checkingAzureReadiness || !azureReadiness?.available}
               className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-60"
             >
               {deploying ? <><Loader2 className="h-4 w-4 animate-spin" />Setting up...</> : "Start One-Click Setup"}
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                const fallbackMode = Math.max(1, Number(serverCount) || 1) > 5 ? "container" : "single-host";
+                void deployCollector(fallbackMode);
+              }}
+              disabled={deploying}
+              className="rounded-lg border border-border px-4 py-2 text-sm font-semibold text-foreground transition hover:bg-border disabled:opacity-60"
+            >
+              Generate Setup Script Instead
+            </button>
           </div>
+          <p className="text-xs text-muted">
+            If one-click setup is blocked by Azure tenant or subscription policy, use script generation and run it manually.
+          </p>
         </div>
       )}
 
@@ -807,6 +825,11 @@ function CollectorStep({ conn, auth, server }: {
       {deployError && (
         <div className="rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
           Deploy failed: {deployError}
+          {noSubscriptionError && (
+            <p className="mt-1 text-xs text-danger/90">
+              This service principal can authenticate but cannot see any subscription in this tenant. Confirm Azure RBAC assignment, then retry one-click, or use "Generate Setup Script Instead".
+            </p>
+          )}
         </div>
       )}
 
